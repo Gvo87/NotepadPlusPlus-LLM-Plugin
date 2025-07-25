@@ -519,126 +519,45 @@ void restoreSelectionState(HWND hScintilla, const SelectionState& state) {
 
 std::wstring getSelectedText()
 {
-    OutputDebugStringA("\n[LLM] ===== Starting getSelectedText() =====\n");
-    char debugMsg[512];
-    
-    try {
-        // Get current Scintilla handle
-        int currentEdit;
-        HWND nppHandle = nppData._nppHandle;
-        
-        if (!nppHandle || !IsWindow(nppHandle)) {
-            OutputDebugStringA("[LLM] ERROR: Invalid NPP handle or window\n");
-            return L"";
-        }
-        
-        // Get current Scintilla view
-        ::SendMessage(nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
-        HWND curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-        
-        if (!curScintilla || !IsWindow(curScintilla)) {
-            OutputDebugStringA("[LLM] ERROR: Invalid Scintilla handle or window\n");
-            return L"";
-        }
-        
-        // Save the current selection state
-        SelectionState savedState = saveSelectionState(curScintilla);
-        
-        // Get document length
-        int docLength = ::SendMessage(curScintilla, SCI_GETLENGTH, 0, 0);
-        
-        sprintf_s(debugMsg, 
-            "[LLM] Document state - Length: %d, Handle valid: %s, Window active: %s\n",
-            docLength,
-            (curScintilla && IsWindow(curScintilla)) ? "Yes" : "No",
-            (nppHandle && IsWindow(nppHandle)) ? "Yes" : "No"
-        );
-        OutputDebugStringA(debugMsg);
-       
-        if (docLength <= 0) {
-            OutputDebugStringA("[LLM] getSelectedText: Empty document or error getting length\n");
-            return L"";
-        }
-        
-        int selStart = savedState.start;
-        int selEnd = savedState.end;
-        
-        sprintf_s(debugMsg, "[LLM] getSelectedText: Initial selection - start: %d, end: %d\n", selStart, selEnd);
-        OutputDebugStringA(debugMsg);
-        
-        bool usedFallback = false;
-        
-        // If no selection, use the entire document
-        if (selEnd - selStart <= 0) {
-            OutputDebugStringA("[LLM] No selection found, using entire document\n");
-            
-            // Get document length directly
-            selStart = 0;
-            selEnd = (int)::SendMessage(curScintilla, SCI_GETLENGTH, 0, 0);
-            
-            sprintf_s(debugMsg, "[LLM] Using document length: %d\n", selEnd);
-            OutputDebugStringA(debugMsg);
-            
-            usedFallback = true;
-        }
-        
-        int textLength = selEnd - selStart;
-        if (textLength <= 0) {
-            return L"";
-        }
-        
-        // Allocate buffer for UTF-8 text
-        char* buffer = new char[textLength + 1];
-        if (!buffer) {
-            OutputDebugStringA("[LLM] getSelectedText: Memory allocation failed for buffer\n");
-            return L"";
-        }
-        
-        LRESULT result;
-        if (usedFallback) {
-            // Use SCI_GETTEXT for entire document
-            result = ::SendMessage(curScintilla, SCI_GETTEXT, textLength + 1, (LPARAM)buffer);
-        } else {
-            // Use SCI_GETSELTEXT for selected text
-            result = ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, (LPARAM)buffer);
-        }
-        
-        if (result <= 0) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        buffer[textLength] = '\0';
-        
-        // Convert UTF-8 to wide string
-        int wideLength = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, NULL, 0);
-        if (wideLength <= 0) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        wchar_t* wideBuffer = new wchar_t[wideLength];
-        if (!wideBuffer) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        int convResult = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, wideBuffer, wideLength);
-        if (convResult <= 0) {
-            delete[] buffer;
-            delete[] wideBuffer;
-            return L"";
-        }
-        
-        std::wstring result_str(wideBuffer);
+    // Get current Scintilla handle
+    int currentEdit;
+    ::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
+    HWND curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+
+    if (!curScintilla) return L"";
+
+    // Get selection length
+    int selLength = ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, 0);
+    if (selLength <= 1) return L""; // No text selected
+
+    // Allocate buffer for UTF-8 text
+    char* buffer = new char[selLength];
+    if (!buffer) return L"";
+
+    // Get the selected text
+    ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, (LPARAM)buffer);
+
+    // Convert UTF-8 to wide string
+    int wideLength = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, NULL, 0);
+    if (wideLength <= 0) {
         delete[] buffer;
-        delete[] wideBuffer;
-        
-        return result_str;
-    }
-    catch (...) {
         return L"";
     }
+
+    wchar_t* wideBuffer = new wchar_t[wideLength];
+    if (!wideBuffer) {
+        delete[] buffer;
+        return L"";
+    }
+
+    MultiByteToWideChar(CP_UTF8, 0, buffer, -1, wideBuffer, wideLength);
+
+    std::wstring result(wideBuffer);
+
+    delete[] buffer;
+    delete[] wideBuffer;
+
+    return result;
 }
 
 void replaceSelectedText(const std::wstring& newText)
