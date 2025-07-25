@@ -526,16 +526,24 @@ std::wstring getSelectedText()
 
     if (!curScintilla) return L"";
 
-    // Get selection length
-    int selLength = ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, 0);
-    if (selLength <= 1) return L""; // No text selected
+    // Get selection start and end
+    int selStart = ::SendMessage(curScintilla, SCI_GETSELECTIONSTART, 0, 0);
+    int selEnd = ::SendMessage(curScintilla, SCI_GETSELECTIONEND, 0, 0);
+
+    int len = selEnd - selStart;
+    if (len <= 0) return L"";
 
     // Allocate buffer for UTF-8 text
-    char* buffer = new char[selLength];
+    char* buffer = new char[len + 1];
     if (!buffer) return L"";
 
     // Get the selected text
-    ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, (LPARAM)buffer);
+    Sci_TextRange tr;
+    tr.chrg.cpMin = selStart;
+    tr.chrg.cpMax = selEnd;
+    tr.lpstrText = buffer;
+    ::SendMessage(curScintilla, SCI_GETTEXTRANGE, 0, (LPARAM)&tr);
+    buffer[len] = '\0';
 
     // Convert UTF-8 to wide string
     int wideLength = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, NULL, 0);
