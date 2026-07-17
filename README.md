@@ -101,6 +101,15 @@ The build script automatically:
 - Compiles with platform toolset v143
 - Links required Windows libraries
 
+### Automated Tests
+The portable request, JSON, and UTF-8 regression tests use Catch2. Configure them with CMake:
+```bash
+cmake -S . -B CMakeBuild
+cmake --build CMakeBuild
+ctest --test-dir CMakeBuild --output-on-failure
+```
+The first configure downloads the pinned Catch2 release. The tests do not require Notepad++ or an OpenAI API key.
+
 ## 🏗️ Technical Architecture
 
 ### Core Components

@@ -25,11 +25,13 @@ const int nbFunc = 8;
 // Initialization of your plugin data here
 // It will be called while plugin loading
 void pluginInit(HANDLE hModule);
+void pluginRuntimeInit();
 
 //
 // Cleanup of your plugin
 // It will be called while plugin unloading
 void pluginCleanUp();
+void noteDocumentModified(HWND scintilla);
 
 //
 //Initialization of your plugin commands
@@ -57,6 +59,7 @@ void checkGrammar();
 void translateText();
 void summarizeText();
 void openSettings();
+void testConnection(HWND dialog, const std::wstring& apiKey);
 
 // Get plugin module handle
 HMODULE getPluginModuleHandle();

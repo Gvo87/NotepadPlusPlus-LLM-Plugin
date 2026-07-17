@@ -1,10 +1,21 @@
 #include "LLMService.h"
 #include "SimpleJson.h"
-#include <sstream>
-#include <fstream>
-#include <wininet.h>
+#include "TextCodec.h"
+
 #include <mutex>
+#include <sstream>
+
 #pragma comment(lib, "wininet.lib")
+
+namespace {
+constexpr DWORD kRequestTimeoutMilliseconds = 30000;
+
+std::wstring lastErrorMessage(const wchar_t* operation)
+{
+    const DWORD error = GetLastError();
+    return std::wstring(operation) + L" failed (Win32 error " + std::to_wstring(error) + L").";
+}
+}
 
 LLMService* LLMService::instance = nullptr;
 
@@ -18,13 +29,10 @@ LLMService::~LLMService()
 
 LLMService& LLMService::getInstance()
 {
-    // Thread-safe singleton using double-checked locking
+    static std::mutex instanceMutex;
+    std::lock_guard<std::mutex> lock(instanceMutex);
     if (!instance) {
-        static std::mutex instanceMutex;
-        std::lock_guard<std::mutex> lock(instanceMutex);
-        if (!instance) {
-            instance = new LLMService();
-        }
+        instance = new LLMService();
     }
     return *instance;
 }
@@ -37,222 +45,226 @@ void LLMService::initialize()
 void LLMService::cleanup()
 {
     saveSettings();
-    if (instance) {
-        delete instance;
-        instance = nullptr;
-    }
+    delete instance;
+    instance = nullptr;
 }
 
 void LLMService::setApiKey(const std::wstring& key)
 {
+    std::lock_guard<std::mutex> lock(settingsMutex);
     apiKey = key;
 }
 
 std::wstring LLMService::getApiKey() const
 {
+    std::lock_guard<std::mutex> lock(settingsMutex);
     return apiKey;
 }
 
 bool LLMService::isConfigured() const
 {
-    return !apiKey.empty();
+    return !getApiKey().empty();
 }
 
-std::wstring LLMService::callLLM(const std::wstring& prompt, const std::wstring& model)
+LLMResult LLMService::callLLM(const std::wstring& prompt, const std::wstring& model)
 {
-    if (!isConfigured()) {
-        MessageBox(NULL, L"OpenAI API key not configured. Please set it in the plugin settings.", L"LLM Assistant", MB_OK | MB_ICONWARNING);
-        return L"";
+    return callLLMWithApiKey(prompt, getApiKey(), model);
+}
+
+LLMResult LLMService::callLLMWithApiKey(
+    const std::wstring& prompt, const std::wstring& configuredApiKey, const std::wstring& model)
+{
+    if (configuredApiKey.empty()) {
+        return LLMResult::Failure(L"OpenAI API key is not configured. Set it in the plugin settings.");
     }
 
-    try {
-        // Prepare JSON payload using JsonBuilder
+    const std::string modelUtf8 = wideToUtf8(model);
+    const std::string promptUtf8 = wideToUtf8(prompt);
+    const std::string apiKeyUtf8 = wideToUtf8(configuredApiKey);
+    const std::string urlUtf8 = wideToUtf8(apiUrl);
+    if ((model.empty() || !modelUtf8.empty())
+        && (prompt.empty() || !promptUtf8.empty())
+        && !apiKeyUtf8.empty()
+        && !urlUtf8.empty()) {
         JsonBuilder builder;
         builder.startObject();
-        builder.addString("model", std::string(model.begin(), model.end()));
+        builder.addString("model", modelUtf8);
         builder.addNumber("max_tokens", 1000);
         builder.addNumber("temperature", 0.7);
-        
         builder.startArray("messages");
         builder.addObjectToArray();
         builder.addString("role", "user");
-        builder.addString("content", std::string(prompt.begin(), prompt.end()));
+        builder.addString("content", promptUtf8);
         builder.endObjectInArray();
         builder.endArray();
         builder.endObject();
-        
-        std::string jsonString = builder.toString();
-        
-        // Prepare headers
-        std::string authHeader = "Authorization: Bearer " + std::string(apiKey.begin(), apiKey.end());
-        std::string headers = "Content-Type: application/json\r\n" + authHeader + "\r\n";
-        
-        // Make HTTP request
-        std::string response = makeHttpRequest(std::string(apiUrl.begin(), apiUrl.end()), headers, jsonString);
-        
-        if (response.empty()) {
-            MessageBox(NULL, L"Failed to get response from OpenAI API", L"LLM Assistant", MB_OK | MB_ICONERROR);
-            return L"";
-        }
-        
-        // Parse response
-        return extractContentFromResponse(response);
-    }
-    catch (const std::exception& e) {
-        std::wstring errorMsg = L"Error calling LLM: " + std::wstring(e.what(), e.what() + strlen(e.what()));
-        MessageBox(NULL, errorMsg.c_str(), L"LLM Assistant", MB_OK | MB_ICONERROR);
-        return L"";
-    }
-}
 
-std::string LLMService::makeHttpRequest(const std::string& url, const std::string& headers, const std::string& postData)
-{
-    HINTERNET hInternet = nullptr;
-    HINTERNET hConnect = nullptr;
-    HINTERNET hRequest = nullptr;
-    
-    try {
-        hInternet = InternetOpenA("LLM Assistant", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-        if (!hInternet) {
-            return "";
+        const std::string headers = "Content-Type: application/json\r\nAuthorization: Bearer "
+            + apiKeyUtf8 + "\r\n";
+        const HttpResponse response = makeHttpRequest(urlUtf8, headers, builder.toString());
+        if (!response.succeeded) {
+            return LLMResult::Failure(response.error);
         }
-        
-        // Parse URL to get components
-        URL_COMPONENTSA urlComp = {0};
-        urlComp.dwStructSize = sizeof(urlComp);
-        char hostname[256] = {0};
-        char path[1024] = {0};
-        urlComp.lpszHostName = hostname;
-        urlComp.dwHostNameLength = sizeof(hostname) - 1;
-        urlComp.lpszUrlPath = path;
-        urlComp.dwUrlPathLength = sizeof(path) - 1;
-        
-        if (!InternetCrackUrlA(url.c_str(), 0, 0, &urlComp)) {
-            InternetCloseHandle(hInternet);
-            return "";
-        }
-        
-        hConnect = InternetConnectA(hInternet, hostname, urlComp.nPort, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-        if (!hConnect) {
-            InternetCloseHandle(hInternet);
-            return "";
-        }
-        
-        DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
-        if (urlComp.nScheme == INTERNET_SCHEME_HTTPS) {
-            flags |= INTERNET_FLAG_SECURE;
-        }
-        
-        hRequest = HttpOpenRequestA(hConnect, "POST", path, NULL, NULL, NULL, flags, 0);
-        if (!hRequest) {
-            InternetCloseHandle(hConnect);
-            InternetCloseHandle(hInternet);
-            return "";
-        }
-        
-        // Send request with headers and data
-        BOOL result = HttpSendRequestA(hRequest, 
-                                      headers.empty() ? NULL : headers.c_str(), 
-                                      static_cast<DWORD>(headers.length()), 
-                                      postData.empty() ? NULL : (LPVOID)postData.c_str(), 
-                                      static_cast<DWORD>(postData.length()));
-        
-        std::string response;
-        if (result) {
-            char buffer[4096];
-            DWORD bytesRead = 0;
-            
-            while (InternetReadFile(hRequest, buffer, sizeof(buffer) - 1, &bytesRead) && bytesRead > 0) {
-                buffer[bytesRead] = '\0';
-                response.append(buffer, bytesRead);
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            const LLMResult apiError = extractContentFromResponse(response.body);
+            if (!apiError.success && !apiError.error.empty()) {
+                return apiError;
             }
+            return LLMResult::Failure(L"OpenAI returned HTTP " + std::to_wstring(response.statusCode) + L".");
         }
-        
-        // Cleanup resources
-        if (hRequest) InternetCloseHandle(hRequest);
-        if (hConnect) InternetCloseHandle(hConnect);
-        if (hInternet) InternetCloseHandle(hInternet);
-        
-        return response;
+
+        return extractContentFromResponse(response.body);
     }
-    catch (...) {
-        // Ensure cleanup in case of exceptions
-        if (hRequest) InternetCloseHandle(hRequest);
-        if (hConnect) InternetCloseHandle(hConnect);
-        if (hInternet) InternetCloseHandle(hInternet);
-        return "";
-    }
+
+    return LLMResult::Failure(L"Unable to encode the request as UTF-8.");
 }
 
-std::wstring LLMService::extractContentFromResponse(const std::string& jsonResponse)
+LLMService::HttpResponse LLMService::makeHttpRequest(
+    const std::string& url, const std::string& headers, const std::string& postData)
+{
+    HINTERNET internet = InternetOpenA("LLM Assistant", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
+    if (!internet) {
+        return { false, 0, "", lastErrorMessage(L"InternetOpen") };
+    }
+
+    const auto closeInternet = [&internet]() {
+        if (internet) {
+            InternetCloseHandle(internet);
+            internet = nullptr;
+        }
+    };
+
+    DWORD timeout = kRequestTimeoutMilliseconds;
+    InternetSetOptionA(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+    InternetSetOptionA(internet, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
+    InternetSetOptionA(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+
+    URL_COMPONENTSA components = { 0 };
+    components.dwStructSize = sizeof(components);
+    char hostName[256] = { 0 };
+    char path[1024] = { 0 };
+    components.lpszHostName = hostName;
+    components.dwHostNameLength = static_cast<DWORD>(sizeof(hostName) - 1);
+    components.lpszUrlPath = path;
+    components.dwUrlPathLength = static_cast<DWORD>(sizeof(path) - 1);
+    if (!InternetCrackUrlA(url.c_str(), 0, 0, &components)) {
+        const std::wstring error = lastErrorMessage(L"InternetCrackUrl");
+        closeInternet();
+        return { false, 0, "", error };
+    }
+
+    HINTERNET connection = InternetConnectA(internet, hostName, components.nPort, nullptr, nullptr,
+        INTERNET_SERVICE_HTTP, 0, 0);
+    if (!connection) {
+        const std::wstring error = lastErrorMessage(L"InternetConnect");
+        closeInternet();
+        return { false, 0, "", error };
+    }
+
+    DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
+    if (components.nScheme == INTERNET_SCHEME_HTTPS) {
+        flags |= INTERNET_FLAG_SECURE;
+    }
+
+    HINTERNET request = HttpOpenRequestA(connection, "POST", path, nullptr, nullptr, nullptr, flags, 0);
+    if (!request) {
+        const std::wstring error = lastErrorMessage(L"HttpOpenRequest");
+        InternetCloseHandle(connection);
+        closeInternet();
+        return { false, 0, "", error };
+    }
+
+    const BOOL requestSent = HttpSendRequestA(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+        const_cast<char*>(postData.data()), static_cast<DWORD>(postData.size()));
+    if (!requestSent) {
+        const std::wstring error = lastErrorMessage(L"HttpSendRequest");
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        closeInternet();
+        return { false, 0, "", error };
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+    if (!HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &statusCode, &statusSize, nullptr)) {
+        statusCode = 0;
+    }
+
+    std::string responseBody;
+    char buffer[4096];
+    DWORD bytesRead = 0;
+    bool readSucceeded = true;
+    while (true) {
+        if (!InternetReadFile(request, buffer, sizeof(buffer), &bytesRead)) {
+            readSucceeded = false;
+            break;
+        }
+        if (bytesRead == 0) {
+            break;
+        }
+        responseBody.append(buffer, bytesRead);
+    }
+
+    const std::wstring readError = readSucceeded ? L"" : lastErrorMessage(L"InternetReadFile");
+    InternetCloseHandle(request);
+    InternetCloseHandle(connection);
+    closeInternet();
+    if (!readSucceeded) {
+        return { false, 0, "", readError };
+    }
+
+    return { true, statusCode, responseBody, L"" };
+}
+
+LLMResult LLMService::extractContentFromResponse(const std::string& jsonResponse)
 {
     try {
         SimpleJson parser(jsonResponse);
-        
         if (parser.hasError()) {
-            std::string errorMsg = parser.getErrorMessage();
-            return L"API Error: " + std::wstring(errorMsg.begin(), errorMsg.end());
+            const std::wstring error = utf8ToWide(parser.getErrorMessage());
+            return LLMResult::Failure(error.empty() ? L"OpenAI returned an API error." : error);
         }
-        
-        std::string content = parser.extractContent();
+
+        const std::wstring content = utf8ToWide(parser.extractContent());
         if (!content.empty()) {
-            return std::wstring(content.begin(), content.end());
+            return LLMResult::Success(content);
         }
-        
-        return L"No content found in response";
-    }
-    catch (const std::exception& e) {
-        return L"Error parsing response: " + std::wstring(e.what(), e.what() + strlen(e.what()));
+        return LLMResult::Failure(L"OpenAI returned no usable content.");
+    } catch (...) {
+        return LLMResult::Failure(L"Unable to parse the OpenAI response.");
     }
 }
 
 void LLMService::loadSettings()
 {
-    HKEY hKey = nullptr;
-    try {
-        // Load API key from registry
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\NotepadPlusPlus\\LLMAssistant", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-            wchar_t buffer[512] = {0};
-            DWORD bufferSize = sizeof(buffer) - sizeof(wchar_t); // Leave space for null terminator
-            DWORD valueType = REG_SZ;
-            
-            if (RegQueryValueEx(hKey, L"ApiKey", NULL, &valueType, (LPBYTE)buffer, &bufferSize) == ERROR_SUCCESS) {
-                if (valueType == REG_SZ && bufferSize > 0) {
-                    buffer[bufferSize / sizeof(wchar_t)] = L'\0'; // Ensure null termination
-                    apiKey = buffer;
-                }
-            }
-            RegCloseKey(hKey);
-            hKey = nullptr;
-        }
+    HKEY key = nullptr;
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\NotepadPlusPlus\\LLMAssistant", 0, KEY_READ, &key)
+        != ERROR_SUCCESS) {
+        return;
     }
-    catch (...) {
-        if (hKey) {
-            RegCloseKey(hKey);
-        }
+
+    wchar_t buffer[512] = { 0 };
+    DWORD bufferSize = sizeof(buffer) - sizeof(wchar_t);
+    DWORD valueType = REG_SZ;
+    if (RegQueryValueEx(key, L"ApiKey", nullptr, &valueType, reinterpret_cast<LPBYTE>(buffer), &bufferSize)
+        == ERROR_SUCCESS && valueType == REG_SZ && bufferSize > 0) {
+        buffer[bufferSize / sizeof(wchar_t)] = L'\0';
+        setApiKey(buffer);
     }
+    RegCloseKey(key);
 }
 
 void LLMService::saveSettings()
 {
-    HKEY hKey = nullptr;
-    try {
-        // Save API key to registry
-        if (RegCreateKeyEx(HKEY_CURRENT_USER, L"Software\\NotepadPlusPlus\\LLMAssistant", 0, NULL, 
-                          REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            
-            DWORD dataSize = static_cast<DWORD>((apiKey.length() + 1) * sizeof(wchar_t));
-            if (RegSetValueEx(hKey, L"ApiKey", 0, REG_SZ, (LPBYTE)apiKey.c_str(), dataSize) == ERROR_SUCCESS) {
-                // Successfully saved
-            }
-            
-            RegCloseKey(hKey);
-            hKey = nullptr;
-        }
+    const std::wstring currentApiKey = getApiKey();
+    HKEY key = nullptr;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, L"Software\\NotepadPlusPlus\\LLMAssistant", 0, nullptr,
+            REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+        return;
     }
-    catch (...) {
-        if (hKey) {
-            RegCloseKey(hKey);
-        }
-    }
+
+    const DWORD dataSize = static_cast<DWORD>((currentApiKey.length() + 1) * sizeof(wchar_t));
+    RegSetValueEx(key, L"ApiKey", 0, REG_SZ, reinterpret_cast<const BYTE*>(currentApiKey.c_str()), dataSize);
+    RegCloseKey(key);
 }

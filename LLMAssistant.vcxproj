@@ -95,19 +95,24 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\LLMService.h" />
+    <ClInclude Include="src\LLMResult.h" />
     <ClInclude Include="src\menuCmdID.h" />
     <ClInclude Include="src\PluginDefinition.h" />
     <ClInclude Include="src\PluginInterface.h" />
+    <ClInclude Include="src\RequestTarget.h" />
     <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\SettingsDialog.h" />
     <ClInclude Include="src\SimpleJson.h" />
+    <ClInclude Include="src\TextCodec.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\LLMService.cpp" />
     <ClCompile Include="src\NppPlugin.cpp" />
     <ClCompile Include="src\PluginDefinition.cpp" />
+    <ClCompile Include="src\RequestTarget.cpp" />
     <ClCompile Include="src\SettingsDialog.cpp" />
     <ClCompile Include="src\SimpleJson.cpp" />
+    <ClCompile Include="src\TextCodec.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="src\LLMAssistant.rc" />

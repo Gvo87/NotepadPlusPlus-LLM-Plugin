@@ -1,353 +1,383 @@
 #include "PluginDefinition.h"
-#include "menuCmdID.h"
+#include "LLMResult.h"
 #include "LLMService.h"
+#include "RequestTarget.h"
 #include "SettingsDialog.h"
+#include "TextCodec.h"
+#include "menuCmdID.h"
 #include "resource.h"
 
-// Scintilla message definitions
-#ifndef SCI_GETCURRENTPOS
-#define SCI_GETCURRENTPOS 2008
-#define SCI_GETANCHOR 2009
-#define SCI_SETCURRENTPOS 2141
-#define SCI_SETANCHOR 2022
-#define SCI_SCROLLCARET 2169
-#endif
-#include <string>
-#include <windows.h>
 #include <algorithm>
-#include <cctype>
-#include <tchar.h>
+#include <atomic>
+#include <cstring>
+#include <cwctype>
+#include <map>
+#include <string>
+#include <thread>
 
-// Forward declarations
-std::wstring getSelectedText();
-void replaceSelectedText(const std::wstring& newText);
-std::wstring getCurrentFileName();
-std::wstring getFileExtension(const std::wstring& filename);
-std::wstring getLanguageContext(const std::wstring& extension);
+#define STATUSBAR_DOC_TYPE 0
+#define NPPM_SETSTATUSBAR (NPPMSG + 30)
+#define SCI_GETDOCPOINTER 2357
+#define WM_LLM_REQUEST_COMPLETE (WM_APP + 110)
+
 std::wstring getContextualPrompt(const std::wstring& basePrompt, const std::wstring& operation);
-void showStatusMessage(const wchar_t* message);
-void clearStatusMessage();
 
-// Global module handle for the plugin DLL
-HMODULE g_hModule = NULL;
-
-//
-// The plugin data that Notepad++ needs
-//
-FuncItem funcItem[nbFunc];
-
-//
-// The data of Notepad++ that you can use in your plugin commands
-//
-NppData nppData;
-
-//
-// Initialize your plugin data here
-// It will be called while plugin loading   
-void pluginInit(HANDLE hModule)
+namespace {
+struct DocumentTarget
 {
-    // Store the module handle for resource access
-    g_hModule = (HMODULE)hModule;
-    
-    // Initialize LLM service
-    LLMService::getInstance().initialize();
-}
+    HWND scintilla;
+    uintptr_t document;
+    TextRange range;
+    unsigned long revision;
+};
 
-//
-// Here you can do the clean up, save the parameters (if any) for the next session
-//
-void pluginCleanUp()
+struct RequestCompletion
 {
-    LLMService::getInstance().cleanup();
-}
+    DocumentTarget target;
+    LLMResult result;
+    bool isConnectionTest;
+    HWND dialog;
+    std::wstring originalText;
+    bool appendOriginalText;
+};
 
-//
-// Initialization of your plugin commands
-// You should fill your plugins commands here
-void commandMenuInit()
-{
-    //--------------------------------------------//
-    //-- STEP 3. CUSTOMIZE YOUR PLUGIN COMMANDS --//
-    //--------------------------------------------//
-    // with function :
-    // setCommand(int index,                      // zero based number to indicate the order of command
-    //            TCHAR *commandName,             // the command name that you want to see in plugin menu
-    //            PFUNCPLUGINCMD functionPointer, // the symbol of function (function pointer) associated with this command. The body should be defined below. See Step 4.
-    //            ShortcutKey *shortcut,          // optional. Define a shortcut to trigger this command
-    //            bool check0nInit                // optional. Make this menu item be checked visually
-    //            );
-    // Create shortcut for Custom Prompt: Ctrl+Shift+Alt+P
-    ShortcutKey* customShortcut = new ShortcutKey;
-    customShortcut->_isCtrl = true;
-    customShortcut->_isShift = true;
-    customShortcut->_isAlt = true;
-    customShortcut->_key = 'P';
-    
-    setCommand(0, (TCHAR*)TEXT("Custom Prompt"), customPrompt, customShortcut, false);
-    
-    // Create shortcut for Enhance Text: Ctrl+Shift+Alt+E
-    ShortcutKey* enhanceShortcut = new ShortcutKey;
-    enhanceShortcut->_isCtrl = true;
-    enhanceShortcut->_isShift = true;
-    enhanceShortcut->_isAlt = true;
-    enhanceShortcut->_key = 'E';
-    
-    setCommand(1, (TCHAR*)TEXT("Enhance Text"), enhanceText, enhanceShortcut, false);
-    
-    // Create shortcut for Generate Code: Ctrl+Shift+Alt+G
-    ShortcutKey* generateShortcut = new ShortcutKey;
-    generateShortcut->_isCtrl = true;
-    generateShortcut->_isShift = true;
-    generateShortcut->_isAlt = true;
-    generateShortcut->_key = 'G';
-    
-    setCommand(2, (TCHAR*)TEXT("Generate Code"), generateCode, generateShortcut, false);
-    
-    // Create shortcut for Complete Text: Ctrl+Shift+Alt+C
-    ShortcutKey* completeShortcut = new ShortcutKey;
-    completeShortcut->_isCtrl = true;
-    completeShortcut->_isShift = true;
-    completeShortcut->_isAlt = true;
-    completeShortcut->_key = 'C';
-    
-    setCommand(3, (TCHAR*)TEXT("Complete Text"), completeText, completeShortcut, false);
-    
-    // Create shortcut for Check Grammar: Ctrl+Shift+Alt+R
-    ShortcutKey* grammarShortcut = new ShortcutKey;
-    grammarShortcut->_isCtrl = true;
-    grammarShortcut->_isShift = true;
-    grammarShortcut->_isAlt = true;
-    grammarShortcut->_key = 'R';
-    
-    setCommand(4, (TCHAR*)TEXT("Check Grammar"), checkGrammar, grammarShortcut, false);
-    
-    // Create shortcut for Translate Text: Ctrl+Shift+Alt+T
-    ShortcutKey* translateShortcut = new ShortcutKey;
-    translateShortcut->_isCtrl = true;
-    translateShortcut->_isShift = true;
-    translateShortcut->_isAlt = true;
-    translateShortcut->_key = 'T';
-    
-    setCommand(5, (TCHAR*)TEXT("Translate Text"), translateText, translateShortcut, false);
-    
-    // Create shortcut for Summarize Text: Ctrl+Shift+Alt+S
-    ShortcutKey* summarizeShortcut = new ShortcutKey;
-    summarizeShortcut->_isCtrl = true;
-    summarizeShortcut->_isShift = true;
-    summarizeShortcut->_isAlt = true;
-    summarizeShortcut->_key = 'S';
-    
-    setCommand(6, (TCHAR*)TEXT("Summarize Text"), summarizeText, summarizeShortcut, false);
-    setCommand(7, (TCHAR*)TEXT("Settings"), openSettings, NULL, false);
-}
+HMODULE g_module = nullptr;
+HWND g_completionWindow = nullptr;
+std::thread g_worker;
+bool g_requestActive = false;
+bool g_runtimeInitialized = false;
+bool g_serviceInitialized = false;
+std::atomic<bool> g_shuttingDown(false);
+std::map<HWND, unsigned long> g_documentRevisions;
 
-//
-// Here you can do the clean up (especially for the shortcut)
-//
-void commandMenuCleanUp()
+void showStatusMessage(const wchar_t* message)
 {
-    // Clean up all allocated shortcuts
-    for (int i = 0; i < 7; i++) {
-        if (funcItem[i]._pShKey) {
-            delete funcItem[i]._pShKey;
-            funcItem[i]._pShKey = nullptr;
-        }
+    if (nppData._nppHandle) {
+        SendMessage(nppData._nppHandle, NPPM_SETSTATUSBAR, STATUSBAR_DOC_TYPE,
+            reinterpret_cast<LPARAM>(message));
     }
 }
 
-//
-// This function help you to initialize your plugin commands
-//
-bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, bool check0nInit) 
+void clearStatusMessage()
 {
-    if (index >= nbFunc)
+    showStatusMessage(L"");
+}
+
+HWND currentScintilla()
+{
+    int currentEdit = 0;
+    if (!nppData._nppHandle) {
+        return nullptr;
+    }
+
+    SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, reinterpret_cast<LPARAM>(&currentEdit));
+    return currentEdit == 0 ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+}
+
+bool captureDocumentTarget(DocumentTarget& target, std::wstring& text)
+{
+    HWND scintilla = currentScintilla();
+    if (!scintilla || !IsWindow(scintilla)) {
         return false;
+    }
 
-    if (!pFunc)
+    const int documentLength = static_cast<int>(SendMessage(scintilla, SCI_GETLENGTH, 0, 0));
+    const int selectionStart = static_cast<int>(SendMessage(scintilla, SCI_GETSELECTIONSTART, 0, 0));
+    const int selectionEnd = static_cast<int>(SendMessage(scintilla, SCI_GETSELECTIONEND, 0, 0));
+    const TextRange range = resolveTextRange(selectionStart, selectionEnd, documentLength);
+    if (!isTextRangeValid(range, documentLength)) {
         return false;
+    }
 
-    lstrcpy(funcItem[index]._itemName, cmdName);
-    funcItem[index]._pFunc = pFunc;
-    funcItem[index]._init2Check = check0nInit;
-    funcItem[index]._pShKey = sk;
+    std::string utf8(static_cast<size_t>(range.end - range.start) + 1, '\0');
+    if (range.usesWholeDocument) {
+        SendMessageA(scintilla, SCI_GETTEXT, documentLength + 1, reinterpret_cast<LPARAM>(&utf8[0]));
+    } else {
+        SendMessageA(scintilla, SCI_GETSELTEXT, 0, reinterpret_cast<LPARAM>(&utf8[0]));
+    }
+    utf8.resize(strlen(utf8.c_str()));
+    text = utf8ToWide(utf8);
+    if (text.empty()) {
+        return false;
+    }
 
+    target.scintilla = scintilla;
+    target.document = static_cast<uintptr_t>(SendMessage(scintilla, SCI_GETDOCPOINTER, 0, 0));
+    target.range = range;
+    target.revision = g_documentRevisions[scintilla];
+    return target.document != 0;
+}
+
+bool targetCanBeUpdated(const DocumentTarget& target)
+{
+    if (!target.scintilla || !IsWindow(target.scintilla)
+        || static_cast<uintptr_t>(SendMessage(target.scintilla, SCI_GETDOCPOINTER, 0, 0)) != target.document
+        || !isRevisionCurrent(target.revision, g_documentRevisions[target.scintilla])) {
+        return false;
+    }
+
+    const int documentLength = static_cast<int>(SendMessage(target.scintilla, SCI_GETLENGTH, 0, 0));
+    return isTextRangeValid(target.range, documentLength);
+}
+
+void replaceCapturedRange(const DocumentTarget& target, const std::wstring& text)
+{
+    const std::string utf8 = wideToUtf8(text);
+    if (utf8.empty() && !text.empty()) {
+        MessageBox(nppData._nppHandle, L"Unable to encode the LLM response as UTF-8.",
+            L"LLM Assistant", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    SendMessage(target.scintilla, SCI_SETSEL, target.range.start, target.range.end);
+    SendMessageA(target.scintilla, SCI_REPLACESEL, 0, reinterpret_cast<LPARAM>(utf8.c_str()));
+}
+
+void joinCompletedWorker()
+{
+    if (g_worker.joinable()) {
+        g_worker.join();
+    }
+}
+
+LRESULT CALLBACK completionWindowProc(HWND window, UINT message, WPARAM, LPARAM lParam)
+{
+    if (message != WM_LLM_REQUEST_COMPLETE) {
+        return DefWindowProc(window, message, 0, lParam);
+    }
+
+    RequestCompletion* completion = reinterpret_cast<RequestCompletion*>(lParam);
+    joinCompletedWorker();
+    g_requestActive = false;
+    clearStatusMessage();
+
+    if (completion->isConnectionTest) {
+        if (IsWindow(completion->dialog)) {
+            if (completion->result.success) {
+                MessageBox(completion->dialog, L"Connection test successful!", L"LLM Assistant",
+                    MB_OK | MB_ICONINFORMATION);
+            } else {
+                MessageBox(completion->dialog, (L"Connection test failed: " + completion->result.error).c_str(),
+                    L"LLM Assistant", MB_OK | MB_ICONERROR);
+            }
+        }
+    } else if (!completion->result.success) {
+        MessageBox(nppData._nppHandle, completion->result.error.c_str(), L"LLM Assistant", MB_OK | MB_ICONERROR);
+    } else if (!targetCanBeUpdated(completion->target)) {
+        MessageBox(nppData._nppHandle,
+            L"The document changed while the LLM request was running. The response was discarded.",
+            L"LLM Assistant", MB_OK | MB_ICONWARNING);
+    } else {
+        const std::wstring replacement = completion->appendOriginalText
+            ? completion->originalText + completion->result.content
+            : completion->result.content;
+        replaceCapturedRange(completion->target, replacement);
+    }
+
+    delete completion;
+    return 0;
+}
+
+bool createCompletionWindow()
+{
+    const wchar_t* className = L"LLMAssistantCompletionWindow";
+    WNDCLASS windowClass = {};
+    windowClass.lpfnWndProc = completionWindowProc;
+    windowClass.hInstance = g_module;
+    windowClass.lpszClassName = className;
+    RegisterClass(&windowClass);
+
+    g_completionWindow = CreateWindowEx(0, className, L"", 0, 0, 0, 0, 0,
+        HWND_MESSAGE, nullptr, g_module, nullptr);
+    return g_completionWindow != nullptr;
+}
+
+void startRequest(const DocumentTarget& target, const std::wstring& text, const std::wstring& prompt,
+    bool appendOriginalText)
+{
+    if (g_requestActive) {
+        MessageBox(nppData._nppHandle, L"An LLM request is already in progress.", L"LLM Assistant",
+            MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    if (!g_completionWindow) {
+        MessageBox(nppData._nppHandle, L"Unable to initialize the LLM request handler.", L"LLM Assistant",
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    g_requestActive = true;
+    showStatusMessage(L"Processing LLM request...");
+    g_worker = std::thread([target, text, prompt, appendOriginalText]() {
+        RequestCompletion* completion = new RequestCompletion {
+            target,
+            LLMService::getInstance().callLLM(prompt),
+            false,
+            nullptr,
+            text,
+            appendOriginalText
+        };
+        if (g_shuttingDown || !PostMessage(g_completionWindow, WM_LLM_REQUEST_COMPLETE, 0,
+                reinterpret_cast<LPARAM>(completion))) {
+            delete completion;
+        }
+    });
+}
+
+void runCommand(const std::wstring& basePrompt, const std::wstring& operation, bool appendOriginalText = false)
+{
+    DocumentTarget target = {};
+    std::wstring text;
+    if (!captureDocumentTarget(target, text)) {
+        MessageBox(nppData._nppHandle, L"No text is available. Open a document or select text to process.",
+            L"LLM Assistant", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    const std::wstring prompt = getContextualPrompt(basePrompt + text, operation);
+    startRequest(target, text, prompt, appendOriginalText);
+}
+}
+
+HMODULE g_hModule = nullptr;
+FuncItem funcItem[nbFunc];
+NppData nppData;
+
+void pluginInit(HANDLE hModule)
+{
+    g_module = static_cast<HMODULE>(hModule);
+    g_hModule = g_module;
+}
+
+void pluginRuntimeInit()
+{
+    if (g_runtimeInitialized) {
+        return;
+    }
+
+    LLMService::getInstance().initialize();
+    g_serviceInitialized = true;
+    g_runtimeInitialized = createCompletionWindow();
+    g_shuttingDown = false;
+}
+
+void pluginCleanUp()
+{
+    if (!g_serviceInitialized) {
+        return;
+    }
+
+    g_shuttingDown = true;
+    if (g_worker.joinable()) {
+        g_worker.join();
+    }
+    MSG message = {};
+    while (g_completionWindow
+        && PeekMessage(&message, g_completionWindow, WM_LLM_REQUEST_COMPLETE,
+            WM_LLM_REQUEST_COMPLETE, PM_REMOVE)) {
+        delete reinterpret_cast<RequestCompletion*>(message.lParam);
+    }
+    if (g_completionWindow) {
+        DestroyWindow(g_completionWindow);
+        g_completionWindow = nullptr;
+    }
+    LLMService::getInstance().cleanup();
+    g_runtimeInitialized = false;
+    g_serviceInitialized = false;
+    g_requestActive = false;
+}
+
+void noteDocumentModified(HWND scintilla)
+{
+    if (scintilla) {
+        ++g_documentRevisions[scintilla];
+    }
+}
+
+void commandMenuInit()
+{
+    ShortcutKey* customShortcut = new ShortcutKey { true, true, true, 'P' };
+    ShortcutKey* enhanceShortcut = new ShortcutKey { true, true, true, 'E' };
+    ShortcutKey* generateShortcut = new ShortcutKey { true, true, true, 'G' };
+    ShortcutKey* completeShortcut = new ShortcutKey { true, true, true, 'C' };
+    ShortcutKey* grammarShortcut = new ShortcutKey { true, true, true, 'R' };
+    ShortcutKey* translateShortcut = new ShortcutKey { true, true, true, 'T' };
+    ShortcutKey* summarizeShortcut = new ShortcutKey { true, true, true, 'S' };
+
+    setCommand(0, const_cast<TCHAR*>(TEXT("Custom Prompt")), customPrompt, customShortcut, false);
+    setCommand(1, const_cast<TCHAR*>(TEXT("Enhance Text")), enhanceText, enhanceShortcut, false);
+    setCommand(2, const_cast<TCHAR*>(TEXT("Generate Code")), generateCode, generateShortcut, false);
+    setCommand(3, const_cast<TCHAR*>(TEXT("Complete Text")), completeText, completeShortcut, false);
+    setCommand(4, const_cast<TCHAR*>(TEXT("Check Grammar")), checkGrammar, grammarShortcut, false);
+    setCommand(5, const_cast<TCHAR*>(TEXT("Translate Text")), translateText, translateShortcut, false);
+    setCommand(6, const_cast<TCHAR*>(TEXT("Summarize Text")), summarizeText, summarizeShortcut, false);
+    setCommand(7, const_cast<TCHAR*>(TEXT("Settings")), openSettings, nullptr, false);
+}
+
+void commandMenuCleanUp()
+{
+    for (int index = 0; index < nbFunc; ++index) {
+        delete funcItem[index]._pShKey;
+        funcItem[index]._pShKey = nullptr;
+    }
+}
+
+bool setCommand(size_t index, TCHAR* commandName, PFUNCPLUGINCMD function, ShortcutKey* shortcut, bool checkedOnInit)
+{
+    if (index >= nbFunc || !function) {
+        return false;
+    }
+
+    lstrcpy(funcItem[index]._itemName, commandName);
+    funcItem[index]._pFunc = function;
+    funcItem[index]._init2Check = checkedOnInit;
+    funcItem[index]._pShKey = shortcut;
     return true;
 }
 
-//----------------------------------------------//
-//-- STEP 4. DEFINE YOUR ASSOCIATED FUNCTIONS --//
-//----------------------------------------------//
-
 void customPrompt()
 {
-    // Show input dialog for custom prompt first
-    wchar_t promptBuffer[1024] = {0};
-    
-    // Use a simple input dialog with GetDlgItemText approach
-    INT_PTR result = DialogBoxParam(getPluginModuleHandle(), 
-                                   MAKEINTRESOURCE(IDD_INPUT_PROMPT), 
-                                   nppData._nppHandle, 
-                                   InputPromptDialogProc, 
-                                   (LPARAM)promptBuffer);
-    
-    if (result == IDOK) {
-        std::wstring userPrompt(promptBuffer);
-        if (userPrompt.empty()) {
-            MessageBox(nppData._nppHandle, TEXT("Please enter a prompt."), TEXT("LLM Assistant"), MB_OK);
-            return;
-        }
-        
-        // Get the selected text after the dialog is closed
-        std::wstring selectedText = getSelectedText();
-        if (selectedText.empty()) {
-            MessageBox(nppData._nppHandle, TEXT("No text selected. Please select some text to process."), TEXT("LLM Assistant"), MB_OK);
-            return;
-        }
-        
-        // Combine user prompt with selected text
-        std::wstring fullPrompt = userPrompt + L"\n\nText to process:\n\n" + selectedText;
-        showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(fullPrompt);
-    clearStatusMessage();
-        
-        if (!result.empty()) {
-            replaceSelectedText(result);
-        }
+    wchar_t promptBuffer[1024] = {};
+    if (DialogBoxParam(getPluginModuleHandle(), MAKEINTRESOURCE(IDD_INPUT_PROMPT), nppData._nppHandle,
+            InputPromptDialogProc, reinterpret_cast<LPARAM>(promptBuffer)) != IDOK) {
+        return;
     }
+    if (promptBuffer[0] == L'\0') {
+        MessageBox(nppData._nppHandle, L"Please enter a prompt.", L"LLM Assistant", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    runCommand(std::wstring(promptBuffer) + L"\n\nText to process:\n\n", L"custom");
 }
 
 void enhanceText()
 {
-    // Store selection positions FIRST before any other operations
-    int currentEdit;
-    ::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
-    HWND curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-    
-    int originalSelStart = ::SendMessage(curScintilla, SCI_GETSELECTIONSTART, 0, 0);
-    int originalSelEnd = ::SendMessage(curScintilla, SCI_GETSELECTIONEND, 0, 0);
-    
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to enhance. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"please enhance and improve the following text while maintaining its original meaning:\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"enhance");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        // Restore selection before replacing
-        ::SendMessage(curScintilla, SCI_SETSEL, originalSelStart, originalSelEnd);
-        replaceSelectedText(result);
-    }
+    runCommand(L"Please enhance and improve the following text while maintaining its original meaning:\n\n", L"enhance");
 }
 
 void generateCode()
 {
-    // Store selection positions FIRST before any other operations
-    int currentEdit;
-    ::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
-    HWND curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-    
-    int originalSelStart = ::SendMessage(curScintilla, SCI_GETSELECTIONSTART, 0, 0);
-    int originalSelEnd = ::SendMessage(curScintilla, SCI_GETSELECTIONEND, 0, 0);
-    
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to generate code from. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"generate code based on the following description or comment:\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"generate");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        // Restore selection before replacing
-        ::SendMessage(curScintilla, SCI_SETSEL, originalSelStart, originalSelEnd);
-        replaceSelectedText(result);
-    }
+    runCommand(L"Generate code based on the following description or comment:\n\n", L"generate");
 }
 
 void completeText()
 {
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to complete. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"complete the following text naturally:\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"complete");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        replaceSelectedText(selectedText + result);
-    }
+    runCommand(L"Complete the following text naturally. Return only the continuation:\n\n", L"complete", true);
 }
 
 void checkGrammar()
 {
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to check grammar. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"check and correct the grammar in the following text:\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"grammar");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        replaceSelectedText(result);
-    }
+    runCommand(L"Check and correct the grammar in the following text:\n\n", L"grammar");
 }
 
 void translateText()
 {
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to translate. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"translate the following text to English (or to the most appropriate language if already in English):\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"translate");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        replaceSelectedText(result);
-    }
+    runCommand(L"Translate the following text to English. Return only the translation:\n\n", L"translate");
 }
 
 void summarizeText()
 {
-    std::wstring selectedText = getSelectedText();
-    if (selectedText.empty()) {
-        MessageBox(nppData._nppHandle, TEXT("No text available to summarize. Please open a document with text."), TEXT("LLM Assistant"), MB_OK);
-        return;
-    }
-    
-    std::wstring basePrompt = L"summarize the following text concisely:\n\n" + selectedText;
-    std::wstring prompt = getContextualPrompt(basePrompt, L"summarize");
-    showStatusMessage(L"Processing LLM request...");
-    std::wstring result = LLMService::getInstance().callLLM(prompt);
-    clearStatusMessage();
-    
-    if (!result.empty()) {
-        replaceSelectedText(result);
-    }
+    runCommand(L"Summarize the following text concisely:\n\n", L"summarize");
 }
 
 void openSettings()
@@ -356,509 +386,129 @@ void openSettings()
     dialog.show(nppData._nppHandle);
 }
 
-// Context-aware helper functions
+void testConnection(HWND dialog, const std::wstring& apiKey)
+{
+    if (g_requestActive) {
+        MessageBox(dialog, L"An LLM request is already in progress.", L"LLM Assistant", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    if (apiKey.empty()) {
+        MessageBox(dialog, L"Please enter an API key first.", L"LLM Assistant", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (!g_completionWindow) {
+        MessageBox(dialog, L"Unable to initialize the LLM request handler.", L"LLM Assistant", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    g_requestActive = true;
+    showStatusMessage(L"Testing OpenAI connection...");
+    g_worker = std::thread([dialog, apiKey]() {
+        RequestCompletion* completion = new RequestCompletion {
+            {},
+            LLMService::getInstance().callLLMWithApiKey(
+                L"Reply with the single word: connected.", apiKey),
+            true,
+            dialog,
+            L"",
+            false
+        };
+        if (g_shuttingDown || !PostMessage(g_completionWindow, WM_LLM_REQUEST_COMPLETE, 0,
+                reinterpret_cast<LPARAM>(completion))) {
+            delete completion;
+        }
+    });
+}
+
 std::wstring getCurrentFileName()
 {
-    wchar_t filename[MAX_PATH];
-    ::SendMessage(nppData._nppHandle, NPPM_GETFILENAME, MAX_PATH, (LPARAM)filename);
-    return std::wstring(filename);
+    wchar_t filename[MAX_PATH] = {};
+    SendMessage(nppData._nppHandle, NPPM_GETFILENAME, MAX_PATH, reinterpret_cast<LPARAM>(filename));
+    return filename;
 }
 
 std::wstring getFileExtension(const std::wstring& filename)
 {
-    size_t dotPos = filename.find_last_of(L'.');
-    if (dotPos != std::wstring::npos && dotPos < filename.length() - 1) {
-        std::wstring ext = filename.substr(dotPos);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-        return ext;
+    const size_t dotPosition = filename.find_last_of(L'.');
+    if (dotPosition == std::wstring::npos || dotPosition == filename.length() - 1) {
+        return L"";
     }
-    return L"";
+
+    std::wstring extension = filename.substr(dotPosition);
+    std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    return extension;
 }
 
 std::wstring getLanguageContext(const std::wstring& extension)
 {
-    if (extension == L".py") {
-        return L"Python";
-    } else if (extension == L".js" || extension == L".jsx") {
-        return L"JavaScript";
-    } else if (extension == L".ts" || extension == L".tsx") {
-        return L"TypeScript";
-    } else if (extension == L".cpp" || extension == L".cc" || extension == L".cxx") {
-        return L"C++";
-    } else if (extension == L".c") {
-        return L"C";
-    } else if (extension == L".cs") {
-        return L"C#";
-    } else if (extension == L".java") {
-        return L"Java";
-    } else if (extension == L".php") {
-        return L"PHP";
-    } else if (extension == L".rb") {
-        return L"Ruby";
-    } else if (extension == L".go") {
-        return L"Go";
-    } else if (extension == L".rs") {
-        return L"Rust";
-    } else if (extension == L".html" || extension == L".htm") {
-        return L"HTML";
-    } else if (extension == L".css") {
-        return L"CSS";
-    } else if (extension == L".sql") {
-        return L"SQL";
-    } else if (extension == L".md") {
-        return L"Markdown";
-    } else if (extension == L".json") {
-        return L"JSON";
-    } else if (extension == L".xml") {
-        return L"XML";
-    } else if (extension == L".yaml" || extension == L".yml") {
-        return L"YAML";
-    }
+    if (extension == L".py") return L"Python";
+    if (extension == L".js" || extension == L".jsx") return L"JavaScript";
+    if (extension == L".ts" || extension == L".tsx") return L"TypeScript";
+    if (extension == L".cpp" || extension == L".cc" || extension == L".cxx") return L"C++";
+    if (extension == L".c") return L"C";
+    if (extension == L".cs") return L"C#";
+    if (extension == L".java") return L"Java";
+    if (extension == L".php") return L"PHP";
+    if (extension == L".rb") return L"Ruby";
+    if (extension == L".go") return L"Go";
+    if (extension == L".rs") return L"Rust";
+    if (extension == L".html" || extension == L".htm") return L"HTML";
+    if (extension == L".css") return L"CSS";
+    if (extension == L".sql") return L"SQL";
+    if (extension == L".md") return L"Markdown";
+    if (extension == L".json") return L"JSON";
+    if (extension == L".xml") return L"XML";
+    if (extension == L".yaml" || extension == L".yml") return L"YAML";
     return L"";
 }
 
 std::wstring getContextualPrompt(const std::wstring& basePrompt, const std::wstring& operation)
 {
-    std::wstring filename = getCurrentFileName();
-    std::wstring extension = getFileExtension(filename);
-    std::wstring language = getLanguageContext(extension);
-    
+    const std::wstring language = getLanguageContext(getFileExtension(getCurrentFileName()));
     if (language.empty()) {
         return basePrompt;
     }
-    
+
     std::wstring contextualPrompt = L"As a " + language + L" expert, " + basePrompt;
-    
-    // Add language-specific guidelines based on operation
     if (operation == L"enhance") {
-        if (language == L"Python") {
-            contextualPrompt += L" Follow PEP 8 standards, use type hints, and include docstrings.";
-        } else if (language == L"JavaScript" || language == L"TypeScript") {
-            contextualPrompt += L" Use modern ES6+ syntax, proper async/await patterns, and JSDoc comments.";
-        } else if (language == L"C++") {
-            contextualPrompt += L" Follow modern C++ best practices, use RAII, and include proper comments.";
-        } else if (language == L"Java") {
-            contextualPrompt += L" Follow Java conventions, use proper naming, and include Javadoc comments.";
-        } else if (language == L"C#") {
-            contextualPrompt += L" Follow C# conventions, use proper naming, and include XML documentation.";
-        }
+        if (language == L"Python") contextualPrompt += L" Follow PEP 8 standards, use type hints, and include docstrings.";
+        else if (language == L"JavaScript" || language == L"TypeScript") contextualPrompt += L" Use modern ES6+ syntax and proper async/await patterns.";
+        else if (language == L"C++") contextualPrompt += L" Follow modern C++ best practices and use RAII.";
     } else if (operation == L"generate") {
-        if (language == L"Python") {
-            contextualPrompt += L" Write clean, Pythonic code with proper error handling and type hints.";
-        } else if (language == L"JavaScript" || language == L"TypeScript") {
-            contextualPrompt += L" Write modern, efficient code with proper error handling and clear structure.";
-        } else if (language == L"C++") {
-            contextualPrompt += L" Write efficient, memory-safe code with proper resource management.";
-        }
-    } else if (operation == L"grammar") {
-        if (language == L"Markdown") {
-            contextualPrompt += L" Maintain proper Markdown formatting while fixing grammar.";
-        } else if (language == L"HTML") {
-            contextualPrompt += L" Fix grammar in text content while preserving HTML structure.";
-        }
+        if (language == L"Python") contextualPrompt += L" Write clean Pythonic code with error handling and type hints.";
+        else if (language == L"JavaScript" || language == L"TypeScript") contextualPrompt += L" Write modern, efficient code with clear structure.";
+        else if (language == L"C++") contextualPrompt += L" Write efficient, memory-safe code with proper resource management.";
     }
-    
     return contextualPrompt;
 }
 
-// Status bar message IDs (from Notepad++ source)
-#define STATUSBAR_DOC_TYPE 0
-#define NPPM_SETSTATUSBAR (NPPMSG + 30)
-
-// Helper functions
-void showStatusMessage(const wchar_t* message) {
-    if (!nppData._nppHandle) return;
-    
-    // Set status bar text (part 0 is the main status bar)
-    ::SendMessage(nppData._nppHandle, NPPM_SETSTATUSBAR, STATUSBAR_DOC_TYPE, (LPARAM)message);
-    
-    // Force the UI to update
-    ::UpdateWindow(nppData._nppHandle);
-}
-
-void clearStatusMessage() {
-    if (!nppData._nppHandle) return;
-    
-    // Clear the status bar
-    ::SendMessage(nppData._nppHandle, NPPM_SETSTATUSBAR, STATUSBAR_DOC_TYPE, (LPARAM)L"");
-    
-    // Force the UI to update
-    ::UpdateWindow(nppData._nppHandle);
-}
-
-// Structure to hold selection state
-struct SelectionState {
-    int start;
-    int end;
-    int currentPos;
-    int anchor;
-};
-
-// Helper function to get and save the current selection state
-SelectionState saveSelectionState(HWND hScintilla) {
-    SelectionState state;
-    state.start = (int)::SendMessage(hScintilla, SCI_GETSELECTIONSTART, 0, 0);
-    state.end = (int)::SendMessage(hScintilla, SCI_GETSELECTIONEND, 0, 0);
-    state.currentPos = (int)::SendMessage(hScintilla, SCI_GETCURRENTPOS, 0, 0);
-    state.anchor = (int)::SendMessage(hScintilla, SCI_GETANCHOR, 0, 0);
-    return state;
-}
-
-// Helper function to restore the selection state
-void restoreSelectionState(HWND hScintilla, const SelectionState& state) {
-    // First set the selection range
-    ::SendMessage(hScintilla, SCI_SETSEL, state.start, state.end);
-    
-    // Then set the anchor and current position to preserve the selection direction
-    ::SendMessage(hScintilla, SCI_SETCURRENTPOS, state.currentPos, 0);
-    ::SendMessage(hScintilla, SCI_SETANCHOR, state.anchor, 0);
-    
-    // Ensure the caret is visible
-    ::SendMessage(hScintilla, SCI_SCROLLCARET, 0, 0);
-}
-
-std::wstring getSelectedText()
-{
-    OutputDebugStringA("\n[LLM] ===== Starting getSelectedText() =====\n");
-    char debugMsg[512];
-    
-    try {
-        // Get current Scintilla handle
-        int currentEdit;
-        HWND nppHandle = nppData._nppHandle;
-        
-        if (!nppHandle || !IsWindow(nppHandle)) {
-            OutputDebugStringA("[LLM] ERROR: Invalid NPP handle or window\n");
-            return L"";
-        }
-        
-        // Get current Scintilla view
-        ::SendMessage(nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
-        HWND curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-        
-        if (!curScintilla || !IsWindow(curScintilla)) {
-            OutputDebugStringA("[LLM] ERROR: Invalid Scintilla handle or window\n");
-            return L"";
-        }
-        
-        // Save the current selection state
-        SelectionState savedState = saveSelectionState(curScintilla);
-        
-        // Get document length
-        int docLength = ::SendMessage(curScintilla, SCI_GETLENGTH, 0, 0);
-        
-        sprintf_s(debugMsg, 
-            "[LLM] Document state - Length: %d, Handle valid: %s, Window active: %s\n",
-            docLength,
-            (curScintilla && IsWindow(curScintilla)) ? "Yes" : "No",
-            (nppHandle && IsWindow(nppHandle)) ? "Yes" : "No"
-        );
-        OutputDebugStringA(debugMsg);
-       
-        if (docLength <= 0) {
-            OutputDebugStringA("[LLM] getSelectedText: Empty document or error getting length\n");
-            return L"";
-        }
-        
-        int selStart = savedState.start;
-        int selEnd = savedState.end;
-        
-        sprintf_s(debugMsg, "[LLM] getSelectedText: Initial selection - start: %d, end: %d\n", selStart, selEnd);
-        OutputDebugStringA(debugMsg);
-        
-        bool usedFallback = false;
-        
-        // If no selection, use the entire document
-        if (selEnd - selStart <= 0) {
-            OutputDebugStringA("[LLM] No selection found, using entire document\n");
-            
-            // Get document length directly
-            selStart = 0;
-            selEnd = (int)::SendMessage(curScintilla, SCI_GETLENGTH, 0, 0);
-            
-            sprintf_s(debugMsg, "[LLM] Using document length: %d\n", selEnd);
-            OutputDebugStringA(debugMsg);
-            
-            usedFallback = true;
-        }
-        
-        int textLength = selEnd - selStart;
-        if (textLength <= 0) {
-            return L"";
-        }
-        
-        // Allocate buffer for UTF-8 text
-        char* buffer = new char[textLength + 1];
-        if (!buffer) {
-            OutputDebugStringA("[LLM] getSelectedText: Memory allocation failed for buffer\n");
-            return L"";
-        }
-        
-        LRESULT result;
-        if (usedFallback) {
-            // Use SCI_GETTEXT for entire document
-            result = ::SendMessage(curScintilla, SCI_GETTEXT, textLength + 1, (LPARAM)buffer);
-        } else {
-            // Use SCI_GETSELTEXT for selected text
-            result = ::SendMessage(curScintilla, SCI_GETSELTEXT, 0, (LPARAM)buffer);
-        }
-        
-        if (result <= 0) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        buffer[textLength] = '\0';
-        
-        // Convert UTF-8 to wide string
-        int wideLength = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, NULL, 0);
-        if (wideLength <= 0) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        wchar_t* wideBuffer = new wchar_t[wideLength];
-        if (!wideBuffer) {
-            delete[] buffer;
-            return L"";
-        }
-        
-        int convResult = MultiByteToWideChar(CP_UTF8, 0, buffer, -1, wideBuffer, wideLength);
-        if (convResult <= 0) {
-            delete[] buffer;
-            delete[] wideBuffer;
-            return L"";
-        }
-        
-        std::wstring result_str(wideBuffer);
-        delete[] buffer;
-        delete[] wideBuffer;
-        
-        return result_str;
-    }
-    catch (...) {
-        return L"";
-    }
-}
-
-void replaceSelectedText(const std::wstring& newText)
-{
-    HWND curScintilla = nullptr;
-    SelectionState savedState;
-    
-    // Debug: Show the new text we're trying to replace
-    char debugMsg[512];
-    sprintf_s(debugMsg, "[LLM] Replacing text with: %.*S (length=%zu)\n", 200, newText.c_str(), newText.length());
-    OutputDebugStringA(debugMsg);
-    
-    int currentEdit;
-    HWND nppHandle = nppData._nppHandle;
-    if (!nppHandle || !IsWindow(nppHandle)) {
-        OutputDebugStringA("[LLM] ERROR: Invalid NPP handle or window\n");
-        return;
-    }
-    
-    // Get current Scintilla view
-    ::SendMessage(nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&currentEdit);
-    curScintilla = (currentEdit == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-    
-    if (!curScintilla || !IsWindow(curScintilla)) {
-        OutputDebugStringA("[LLM] ERROR: curScintilla is null or invalid in replaceSelectedText\n");
-        return;
-    }
-    
-    // Save the current selection state before any operation
-    savedState = saveSelectionState(curScintilla);
-    
-    // Debug: Show current selection info
-    sprintf_s(debugMsg, "[LLM] Current selection - start=%d, end=%d, length=%d\n", 
-             savedState.start, savedState.end, savedState.end - savedState.start);
-    OutputDebugStringA(debugMsg);
-    
-    if (newText.empty()) {
-        OutputDebugStringA("[LLM] newText is empty, clearing selection\n");
-        // Restore selection before clearing
-        restoreSelectionState(curScintilla, savedState);
-        ::SendMessage(curScintilla, SCI_REPLACESEL, 0, (LPARAM)"");
-        return;
-    }
-    
-    // Restore the selection before replacing text
-    restoreSelectionState(curScintilla, savedState);
-    
-    // Get the current selection after restoring it
-    int currentSelStart = (int)::SendMessage(curScintilla, SCI_GETSELECTIONSTART, 0, 0);
-    int currentSelEnd = (int)::SendMessage(curScintilla, SCI_GETSELECTIONEND, 0, 0);
-    
-    sprintf_s(debugMsg, "[LLM] Current selection before replace - start=%d, end=%d, length=%d\n", 
-             currentSelStart, currentSelEnd, currentSelEnd - currentSelStart);
-    OutputDebugStringA(debugMsg);
-    
-    // Add newlines for better formatting
-    std::wstring textWithNewlines = newText + L"\n\n";
-    
-    // Declare variables for new selection
-    int newSelStart = currentSelStart;
-    int newSelEnd = currentSelStart;
-    bool replacementSucceeded = false;
-    
-    // First, ensure the selection is set correctly
-    ::SendMessage(curScintilla, SCI_SETSEL, currentSelStart, currentSelEnd);
-    
-    // Try multiple approaches for text replacement
-    
-    // Attempt 1: Direct wide character replacement (works for most cases)
-    // if (!replacementSucceeded) {
-    //     try {
-    //         ::SendMessageW(curScintilla, SCI_REPLACESEL, 1, (LPARAM)textWithNewlines.c_str());
-    //         OutputDebugStringA("[LLM] Text replacement completed using direct wide character method\n");
-    //         newSelEnd = newSelStart + (int)textWithNewlines.length();
-    //         replacementSucceeded = true;
-    //     } catch (...) {
-    //         OutputDebugStringA("[LLM] Direct wide character replacement failed, trying UTF-8 conversion\n");
-    //     }
-    // }
-    
-    // Attempt 2: UTF-8 conversion and replacement
-    if (!replacementSucceeded) {
-        int utf8Length = WideCharToMultiByte(CP_UTF8, 0, textWithNewlines.c_str(), -1, NULL, 0, NULL, NULL);
-        if (utf8Length > 0) {
-            std::string utf8Text(utf8Length, 0);
-            WideCharToMultiByte(CP_UTF8, 0, textWithNewlines.c_str(), -1, &utf8Text[0], utf8Length, NULL, NULL);
-            
-            try {
-                ::SendMessageA(curScintilla, SCI_REPLACESEL, 0, (LPARAM)utf8Text.c_str());
-                OutputDebugStringA("[LLM] Text replacement completed using UTF-8 conversion\n");
-                newSelEnd = newSelStart + (int)textWithNewlines.length();
-                replacementSucceeded = true;
-            } catch (...) {
-                OutputDebugStringA("[LLM] UTF-8 conversion replacement failed, trying chunked replacement\n");
-            }
-        } else {
-            OutputDebugStringA("[LLM] UTF-8 conversion failed, trying chunked replacement\n");
-        }
-    }
-    
-    // Attempt 3: Chunked replacement (for very large texts or encoding issues)
-    if (!replacementSucceeded && !textWithNewlines.empty()) {
-        try {
-            const size_t chunkSize = 4096; // Reasonable chunk size
-            size_t totalLength = textWithNewlines.length();
-            size_t offset = 0;
-            
-            while (offset < totalLength) {
-                size_t chunkLength = min(chunkSize, totalLength - offset);
-                std::wstring chunk = textWithNewlines.substr(offset, chunkLength);
-                
-                // Try wide character first
-                ::SendMessageW(curScintilla, SCI_REPLACESEL, 1, (LPARAM)chunk.c_str());
-                
-                offset += chunkLength;
-                newSelEnd += (int)chunk.length();
-                
-                // Update selection for next chunk
-                if (offset < totalLength) {
-                    ::SendMessage(curScintilla, SCI_SETSEL, newSelEnd, newSelEnd);
-                }
-            }
-            
-            OutputDebugStringA("[LLM] Text replacement completed using chunked method\n");
-            replacementSucceeded = true;
-        } catch (...) {
-            OutputDebugStringA("[LLM] Chunked replacement failed, trying single character fallback\n");
-        }
-    }
-    
-    // Final fallback: Single character replacement if all else fails
-    if (!replacementSucceeded && !textWithNewlines.empty()) {
-        try {
-            // Try to replace with at least the first character
-            std::wstring firstChar(1, textWithNewlines[0]);
-            ::SendMessageW(curScintilla, SCI_REPLACESEL, 1, (LPARAM)firstChar.c_str());
-            newSelEnd = newSelStart + 1;
-            OutputDebugStringA("[LLM] Using single character fallback replacement\n");
-        } catch (...) {
-            OutputDebugStringA("[LLM] All replacement methods failed!\n");
-            return; // Give up if even single character replacement fails
-        }
-    }
-        
-    // Create a new selection state for the replaced text
-    SelectionState newState;
-    newState.start = newSelStart;
-    newState.end = newSelEnd;
-    newState.currentPos = newSelEnd;  // Place cursor at the end
-    newState.anchor = newSelStart;    // Anchor at the start
-    
-    // Apply the new selection
-    restoreSelectionState(curScintilla, newState);
-}
-
-// Get plugin module handle
 HMODULE getPluginModuleHandle()
 {
     return g_hModule;
 }
 
-// Input prompt dialog procedure
-INT_PTR CALLBACK InputPromptDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK InputPromptDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam)
 {
     static wchar_t* promptBuffer = nullptr;
-    
-    switch (message)
-    {
+    switch (message) {
     case WM_INITDIALOG:
-        {
-            // Store the buffer pointer passed via lParam
-            promptBuffer = (wchar_t*)lParam;
-            
-            // Set focus to the text input field
-            SetFocus(GetDlgItem(hDlg, IDC_PROMPT_TEXT));
-            
-            // Set some default helpful text
-            SetDlgItemText(hDlg, IDC_PROMPT_TEXT, L"Summarize this text");
-            
-            return FALSE; // We set the focus manually
-        }
-        
+        promptBuffer = reinterpret_cast<wchar_t*>(lParam);
+        SetFocus(GetDlgItem(dialog, IDC_PROMPT_TEXT));
+        return FALSE;
     case WM_COMMAND:
-        switch (LOWORD(wParam))
-        {
-        case IDOK:
-            {
-                // Get the text from the input field
-                int textLength = GetWindowTextLength(GetDlgItem(hDlg, IDC_PROMPT_TEXT));
-                if (textLength > 0 && textLength < 1024 && promptBuffer)
-                {
-                    GetDlgItemText(hDlg, IDC_PROMPT_TEXT, promptBuffer, 1024);
-                }
-                else if (promptBuffer)
-                {
-                    promptBuffer[0] = L'\0'; // Empty string
-                }
-                
-                EndDialog(hDlg, IDOK);
-                return TRUE;
-            }
-            
-        case IDCANCEL:
-            if (promptBuffer)
-            {
-                promptBuffer[0] = L'\0'; // Empty string
-            }
-            EndDialog(hDlg, IDCANCEL);
+        if (LOWORD(wParam) == IDOK) {
+            GetDlgItemText(dialog, IDC_PROMPT_TEXT, promptBuffer, 1024);
+            EndDialog(dialog, IDOK);
+            return TRUE;
+        }
+        if (LOWORD(wParam) == IDCANCEL) {
+            EndDialog(dialog, IDCANCEL);
             return TRUE;
         }
         break;
-        
     case WM_CLOSE:
-        if (promptBuffer)
-        {
-            promptBuffer[0] = L'\0'; // Empty string
-        }
-        EndDialog(hDlg, IDCANCEL);
+        EndDialog(dialog, IDCANCEL);
         return TRUE;
     }
-    
     return FALSE;
 }

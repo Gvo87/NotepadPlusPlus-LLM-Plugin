@@ -98,28 +98,7 @@ void SettingsDialog::onCancel()
 
 void SettingsDialog::onTestConnection()
 {
-    // Get API key from text field
-    wchar_t buffer[512];
+    wchar_t buffer[512] = {};
     GetDlgItemText(hDlg, IDC_API_KEY, buffer, sizeof(buffer) / sizeof(wchar_t));
-    
-    if (wcslen(buffer) == 0) {
-        MessageBox(hDlg, L"Please enter an API key first.", L"LLM Assistant", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    
-    // Temporarily set the API key for testing
-    std::wstring originalKey = LLMService::getInstance().getApiKey();
-    LLMService::getInstance().setApiKey(buffer);
-    
-    // Test with a simple prompt
-    std::wstring testResult = LLMService::getInstance().callLLM(L"Say 'Hello, this is a test connection.'");
-    
-    if (!testResult.empty() && testResult.find(L"Error") == std::wstring::npos) {
-        MessageBox(hDlg, L"Connection test successful!", L"LLM Assistant", MB_OK | MB_ICONINFORMATION);
-    } else {
-        MessageBox(hDlg, (L"Connection test failed: " + testResult).c_str(), L"LLM Assistant", MB_OK | MB_ICONERROR);
-    }
-    
-    // Restore original key
-    LLMService::getInstance().setApiKey(originalKey);
+    testConnection(hDlg, buffer);
 }

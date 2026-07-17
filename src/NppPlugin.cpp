@@ -12,7 +12,8 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD reasonForCall, LPVOID lpReserved)
             break;
 
         case DLL_PROCESS_DETACH:
-            pluginCleanUp();
+            // Notepad++ sends NPPN_SHUTDOWN before unloading plugins. Avoid waiting
+            // for a worker thread while the loader lock is held.
             break;
 
         case DLL_THREAD_ATTACH:
@@ -28,6 +29,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD reasonForCall, LPVOID lpReserved)
 extern "C" __declspec(dllexport) void setInfo(NppData notpadPlusData)
 {
     nppData = notpadPlusData;
+    pluginRuntimeInit();
     commandMenuInit();
 }
 
@@ -49,10 +51,14 @@ extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode)
     {
         case NPPN_SHUTDOWN:
             commandMenuCleanUp();
+            pluginCleanUp();
             break;
 
         default:
-            return;
+            if (notifyCode->nmhdr.code == 2008) { // SCN_MODIFIED
+                noteDocumentModified(notifyCode->nmhdr.hwndFrom);
+            }
+            break;
     }
 }
 
