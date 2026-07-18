@@ -16,7 +16,7 @@
 #include <thread>
 
 #define STATUSBAR_DOC_TYPE 0
-#define NPPM_SETSTATUSBAR (NPPMSG + 30)
+#define NPPM_SETSTATUSBAR (NPPMSG + 24)
 #define SCI_GETDOCPOINTER 2357
 #define LLM_INTERNAL_RESULT_READY 1
 
@@ -49,6 +49,65 @@ bool g_runtimeInitialized = false;
 bool g_serviceInitialized = false;
 std::atomic<bool> g_shuttingDown(false);
 std::map<HWND, unsigned long> g_documentRevisions;
+HWND g_messageWindow = nullptr;
+const wchar_t* const kMessageWindowClass = L"LLMAssistantMessageWindow";
+
+// Timer that clears a completion message from the status bar after a short delay.
+constexpr UINT_PTR kStatusClearTimerId = 1;
+constexpr UINT kStatusClearDelayMs = 4000;
+
+void processCompletion(RequestCompletion* completion);
+void showStatusMessage(const wchar_t* message);
+void clearStatusMessage();
+
+// Shows a status message and schedules it to be cleared automatically.
+void showTransientStatusMessage(const wchar_t* message)
+{
+    showStatusMessage(message);
+    if (g_messageWindow) {
+        SetTimer(g_messageWindow, kStatusClearTimerId, kStatusClearDelayMs, nullptr);
+    }
+}
+
+LRESULT CALLBACK messageWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_LLM_RESULT) {
+        processCompletion(reinterpret_cast<RequestCompletion*>(lParam));
+        return 0;
+    }
+    if (message == WM_TIMER && wParam == kStatusClearTimerId) {
+        KillTimer(window, kStatusClearTimerId);
+        clearStatusMessage();
+        return 0;
+    }
+    return DefWindowProc(window, message, wParam, lParam);
+}
+
+void createMessageWindow()
+{
+    if (g_messageWindow) {
+        return;
+    }
+
+    WNDCLASSEXW windowClass = {};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = messageWindowProc;
+    windowClass.hInstance = g_module;
+    windowClass.lpszClassName = kMessageWindowClass;
+    RegisterClassExW(&windowClass);
+
+    g_messageWindow = CreateWindowExW(0, kMessageWindowClass, L"", 0, 0, 0, 0, 0,
+        HWND_MESSAGE, nullptr, g_module, nullptr);
+}
+
+void destroyMessageWindow()
+{
+    if (g_messageWindow) {
+        DestroyWindow(g_messageWindow);
+        g_messageWindow = nullptr;
+    }
+    UnregisterClassW(kMessageWindowClass, g_module);
+}
 
 void showStatusMessage(const wchar_t* message)
 {
@@ -60,7 +119,8 @@ void showStatusMessage(const wchar_t* message)
 
 void clearStatusMessage()
 {
-    showStatusMessage(L"");
+    // Notepad++ ignores an empty status string, so send a single space to blank it.
+    showStatusMessage(L" ");
 }
 
 HWND currentScintilla()
@@ -143,15 +203,22 @@ void joinCompletedWorker()
 void processCompletion(RequestCompletion* completion)
 {
     g_requestActive = false;
-    clearStatusMessage();
+
+    if (!completion) {
+        clearStatusMessage();
+        return;
+    }
 
     if (completion->isConnectionTest) {
+        clearStatusMessage();
         if (IsWindow(completion->dialog)) {
             setConnectionTestStatus(completion->dialog, completion->result.success, completion->result.error);
         }
     } else if (!completion->result.success) {
+        showTransientStatusMessage(L"LLM request failed.");
         MessageBox(nppData._nppHandle, completion->result.error.c_str(), L"LLM Assistant", MB_OK | MB_ICONERROR);
     } else if (!targetCanBeUpdated(completion->target)) {
+        showTransientStatusMessage(L"LLM response discarded - document changed.");
         MessageBox(nppData._nppHandle,
             L"The document changed while the LLM request was running. The response was discarded.",
             L"LLM Assistant", MB_OK | MB_ICONWARNING);
@@ -160,6 +227,7 @@ void processCompletion(RequestCompletion* completion)
             ? completion->originalText + completion->result.content
             : completion->result.content;
         replaceCapturedRange(completion->target, replacement);
+        showTransientStatusMessage(L"LLM response applied.");
     }
 
     delete completion;
@@ -167,14 +235,21 @@ void processCompletion(RequestCompletion* completion)
 
 void dispatchCompletion(RequestCompletion* completion)
 {
-    CommunicationInfo info = {
-        LLM_INTERNAL_RESULT_READY,
-        L"LLMAssistant.dll",
-        completion
-    };
-    const LRESULT delivered = SendMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN,
-        reinterpret_cast<WPARAM>(L"LLMAssistant.dll"), reinterpret_cast<LPARAM>(&info));
-    if (!delivered) {
+    // Deliver the result to the UI thread through the plugin's own hidden
+    // message-only window. PostMessage is cross-thread safe and the window's
+    // messages are pumped by Notepad++'s main UI thread, so processCompletion
+    // always runs on the UI thread. This avoids the fragile NPPM_MSGTOPLUGIN
+    // routing that previously dropped results and left the request "stuck".
+    if (!g_messageWindow || !IsWindow(g_messageWindow)) {
+        g_requestActive = false;
+        clearStatusMessage();
+        delete completion;
+        return;
+    }
+
+    if (!PostMessage(g_messageWindow, WM_LLM_RESULT, 0, reinterpret_cast<LPARAM>(completion))) {
+        g_requestActive = false;
+        clearStatusMessage();
         delete completion;
     }
 }
@@ -190,6 +265,9 @@ void startRequest(const DocumentTarget& target, const std::wstring& text, const 
 
     joinCompletedWorker();
     g_requestActive = true;
+    if (g_messageWindow) {
+        KillTimer(g_messageWindow, kStatusClearTimerId);
+    }
     showStatusMessage(L"Processing LLM request...");
     g_worker = std::thread([target, text, prompt, appendOriginalText]() {
         RequestCompletion* completion = new RequestCompletion {
@@ -258,6 +336,7 @@ void pluginRuntimeInit()
     }
 
     LLMService::getInstance().initialize();
+    createMessageWindow();
     g_serviceInitialized = true;
     g_runtimeInitialized = true;
     g_shuttingDown = false;
@@ -273,6 +352,7 @@ void pluginCleanUp()
     if (g_worker.joinable()) {
         g_worker.join();
     }
+    destroyMessageWindow();
     LLMService::getInstance().cleanup();
     g_runtimeInitialized = false;
     g_serviceInitialized = false;
@@ -378,7 +458,7 @@ void openSettings()
     dialog.show(nppData._nppHandle);
 }
 
-void testConnection(HWND dialog, const std::wstring& apiKey)
+void testConnection(HWND dialog, const std::wstring& apiKey, const std::wstring& model)
 {
     if (g_requestActive) {
         setConnectionTestStatus(dialog, false, L"Another LLM request is already in progress.");
@@ -389,14 +469,18 @@ void testConnection(HWND dialog, const std::wstring& apiKey)
         return;
     }
 
+    const std::wstring testModel = model.empty() ? std::wstring(LLMService::defaultModel()) : model;
     joinCompletedWorker();
     g_requestActive = true;
+    if (g_messageWindow) {
+        KillTimer(g_messageWindow, kStatusClearTimerId);
+    }
     showStatusMessage(L"Testing OpenAI connection...");
-    g_worker = std::thread([dialog, apiKey]() {
+    g_worker = std::thread([dialog, apiKey, testModel]() {
         RequestCompletion* completion = new RequestCompletion {
             {},
             LLMService::getInstance().callLLMWithApiKey(
-                L"Reply with the single word: connected.", apiKey),
+                L"Reply with the single word: connected.", apiKey, testModel),
             true,
             dialog,
             L"",

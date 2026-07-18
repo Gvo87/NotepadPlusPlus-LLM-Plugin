@@ -21,11 +21,27 @@
 // Notepad++ messages
 #define NPPMSG (WM_USER + 1000)
 #define NPPM_GETCURRENTSCINTILLA (NPPMSG + 4)
-#define NPPM_GETFILENAME (NPPMSG + 29)
 #define NPPM_MSGTOPLUGIN (NPPMSG + 47)
+
+// File path getters use the RUNCOMMAND_USER scheme, NOT the NPPMSG scheme.
+// (NPPMSG + 29) is NPPM_LAUNCHFINDINFILESDLG, so using it for NPPM_GETFILENAME
+// opened the Find-in-Files dialog and crashed Notepad++.
+#define RUNCOMMAND_USER (WM_USER + 3000)
+#define FILE_NAME 3
+#define NPPM_GETFILENAME (RUNCOMMAND_USER + FILE_NAME)
 
 #define NPPN_FIRST 1000
 #define NPPN_SHUTDOWN (NPPN_FIRST + 9)
+
+// Scintilla notification + modification-type flags.
+#define SCN_MODIFIED 2008
+#define SC_MOD_INSERTTEXT 0x1
+#define SC_MOD_DELETETEXT 0x2
+
+// Scintilla's position type is pointer-sized (ptrdiff_t), not int. Getting this
+// wrong shifts every field after it, so modificationType must be read through a
+// struct with the correct 64-bit layout.
+typedef intptr_t Sci_Position;
 
 // Forward declarations
 struct SCNotification;
@@ -54,20 +70,22 @@ typedef struct {
     ShortcutKey* _pShKey;
 } FuncItem;
 
-// SCNotification structure (simplified)
+// SCNotification structure. Field types must match Scintilla's real layout
+// (Sci_Position is pointer-sized) so that fields such as modificationType are
+// read from the correct offsets on x64.
 struct SCNotification {
     NMHDR nmhdr;
-    int position;
+    Sci_Position position;
     int ch;
     int modifiers;
     int modificationType;
     const char* text;
-    int length;
-    int linesAdded;
+    Sci_Position length;
+    Sci_Position linesAdded;
     int message;
     uintptr_t wParam;
     intptr_t lParam;
-    int line;
+    Sci_Position line;
     int foldLevelNow;
     int foldLevelPrev;
     int margin;
@@ -75,7 +93,7 @@ struct SCNotification {
     int x;
     int y;
     int token;
-    int annotationLinesAdded;
+    Sci_Position annotationLinesAdded;
     int updated;
 };
 

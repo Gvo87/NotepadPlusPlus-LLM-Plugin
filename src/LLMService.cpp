@@ -2,24 +2,48 @@
 #include "SimpleJson.h"
 #include "TextCodec.h"
 
+#include <algorithm>
+#include <cwctype>
 #include <mutex>
 #include <sstream>
 
 #pragma comment(lib, "wininet.lib")
 
 namespace {
-constexpr DWORD kRequestTimeoutMilliseconds = 30000;
+constexpr DWORD kRequestTimeoutMilliseconds = 60000;
 
 std::wstring lastErrorMessage(const wchar_t* operation)
 {
     const DWORD error = GetLastError();
     return std::wstring(operation) + L" failed (Win32 error " + std::to_wstring(error) + L").";
 }
+
+// Reasoning models (GPT-5 family and the o-series) reject the classic
+// "max_tokens" and any non-default "temperature". They require
+// "max_completion_tokens" and no temperature override. The chat-tuned
+// variant "gpt-5-chat*" behaves like gpt-4o and keeps the classic params.
+bool isReasoningModel(const std::wstring& model)
+{
+    std::wstring name = model;
+    std::transform(name.begin(), name.end(), name.begin(), towlower);
+    const auto startsWith = [&](const wchar_t* prefix) { return name.rfind(prefix, 0) == 0; };
+
+    if (startsWith(L"gpt-5")) {
+        return !startsWith(L"gpt-5-chat");
+    }
+    return startsWith(L"o1") || startsWith(L"o3") || startsWith(L"o4");
+}
 }
 
 LLMService* LLMService::instance = nullptr;
 
-LLMService::LLMService() : apiUrl(L"https://api.openai.com/v1/chat/completions")
+const wchar_t* LLMService::defaultModel()
+{
+    return L"gpt-4o";
+}
+
+LLMService::LLMService()
+    : model(defaultModel()), apiUrl(L"https://api.openai.com/v1/chat/completions")
 {
 }
 
@@ -61,14 +85,26 @@ std::wstring LLMService::getApiKey() const
     return apiKey;
 }
 
+void LLMService::setModel(const std::wstring& modelName)
+{
+    std::lock_guard<std::mutex> lock(settingsMutex);
+    model = modelName.empty() ? std::wstring(defaultModel()) : modelName;
+}
+
+std::wstring LLMService::getModel() const
+{
+    std::lock_guard<std::mutex> lock(settingsMutex);
+    return model;
+}
+
 bool LLMService::isConfigured() const
 {
     return !getApiKey().empty();
 }
 
-LLMResult LLMService::callLLM(const std::wstring& prompt, const std::wstring& model)
+LLMResult LLMService::callLLM(const std::wstring& prompt)
 {
-    return callLLMWithApiKey(prompt, getApiKey(), model);
+    return callLLMWithApiKey(prompt, getApiKey(), getModel());
 }
 
 LLMResult LLMService::callLLMWithApiKey(
@@ -89,8 +125,14 @@ LLMResult LLMService::callLLMWithApiKey(
         JsonBuilder builder;
         builder.startObject();
         builder.addString("model", modelUtf8);
-        builder.addNumber("max_tokens", 1000);
-        builder.addNumber("temperature", 0.7);
+        if (isReasoningModel(model)) {
+            // Reasoning tokens are billed against this budget too, so keep it
+            // generous to avoid empty responses from the GPT-5 family.
+            builder.addNumber("max_completion_tokens", 4000);
+        } else {
+            builder.addNumber("max_tokens", 1000);
+            builder.addNumber("temperature", 0.7);
+        }
         builder.startArray("messages");
         builder.addObjectToArray();
         builder.addString("role", "user");
@@ -101,7 +143,8 @@ LLMResult LLMService::callLLMWithApiKey(
 
         const std::string headers = "Content-Type: application/json\r\nAuthorization: Bearer "
             + apiKeyUtf8 + "\r\n";
-        const HttpResponse response = makeHttpRequest(urlUtf8, headers, builder.toString());
+        const std::string body = builder.toString();
+        const HttpResponse response = makeHttpRequest(urlUtf8, headers, body);
         if (!response.succeeded) {
             return LLMResult::Failure(response.error);
         }
@@ -123,7 +166,7 @@ LLMResult LLMService::callLLMWithApiKey(
 LLMService::HttpResponse LLMService::makeHttpRequest(
     const std::string& url, const std::string& headers, const std::string& postData)
 {
-    HINTERNET internet = InternetOpenA("LLM Assistant", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
+    HINTERNET internet = InternetOpenA("LLM Assistant", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
     if (!internet) {
         return { false, 0, "", lastErrorMessage(L"InternetOpen") };
     }
@@ -252,6 +295,15 @@ void LLMService::loadSettings()
         buffer[bufferSize / sizeof(wchar_t)] = L'\0';
         setApiKey(buffer);
     }
+
+    wchar_t modelBuffer[256] = { 0 };
+    DWORD modelSize = sizeof(modelBuffer) - sizeof(wchar_t);
+    DWORD modelType = REG_SZ;
+    if (RegQueryValueEx(key, L"Model", nullptr, &modelType, reinterpret_cast<LPBYTE>(modelBuffer), &modelSize)
+        == ERROR_SUCCESS && modelType == REG_SZ && modelSize > 0) {
+        modelBuffer[modelSize / sizeof(wchar_t)] = L'\0';
+        setModel(modelBuffer);
+    }
     RegCloseKey(key);
 }
 
@@ -266,5 +318,9 @@ void LLMService::saveSettings()
 
     const DWORD dataSize = static_cast<DWORD>((currentApiKey.length() + 1) * sizeof(wchar_t));
     RegSetValueEx(key, L"ApiKey", 0, REG_SZ, reinterpret_cast<const BYTE*>(currentApiKey.c_str()), dataSize);
+
+    const std::wstring currentModel = getModel();
+    const DWORD modelSize = static_cast<DWORD>((currentModel.length() + 1) * sizeof(wchar_t));
+    RegSetValueEx(key, L"Model", 0, REG_SZ, reinterpret_cast<const BYTE*>(currentModel.c_str()), modelSize);
     RegCloseKey(key);
 }

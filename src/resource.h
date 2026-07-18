@@ -14,6 +14,8 @@
 #define IDC_STATIC_PROMPT_LABEL         1006
 #define IDC_STATIC_HELP                 1007
 #define IDC_CONNECTION_STATUS           1008
+#define IDC_MODEL_COMBO                 1009
+#define IDC_STATIC_MODEL_LABEL          1010
 
 // Menu command IDs
 #define ID_ENHANCE_TEXT                 40001
