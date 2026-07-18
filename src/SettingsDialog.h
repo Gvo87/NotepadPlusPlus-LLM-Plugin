@@ -5,6 +5,9 @@
 #include <string>
 #include "resource.h"
 
+void setConnectionTestStatus(HWND dialog, bool succeeded, const std::wstring& details);
+void setConnectionTestPending(HWND dialog);
+
 class SettingsDialog
 {
 private:

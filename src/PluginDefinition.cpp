@@ -18,7 +18,7 @@
 #define STATUSBAR_DOC_TYPE 0
 #define NPPM_SETSTATUSBAR (NPPMSG + 30)
 #define SCI_GETDOCPOINTER 2357
-#define WM_LLM_REQUEST_COMPLETE (WM_APP + 110)
+#define LLM_INTERNAL_RESULT_READY 1
 
 std::wstring getContextualPrompt(const std::wstring& basePrompt, const std::wstring& operation);
 NppData nppData;
@@ -43,9 +43,8 @@ struct RequestCompletion
 };
 
 HMODULE g_module = nullptr;
-HWND g_completionWindow = nullptr;
 std::thread g_worker;
-bool g_requestActive = false;
+std::atomic<bool> g_requestActive(false);
 bool g_runtimeInitialized = false;
 bool g_serviceInitialized = false;
 std::atomic<bool> g_shuttingDown(false);
@@ -141,26 +140,14 @@ void joinCompletedWorker()
     }
 }
 
-LRESULT CALLBACK completionWindowProc(HWND window, UINT message, WPARAM, LPARAM lParam)
+void processCompletion(RequestCompletion* completion)
 {
-    if (message != WM_LLM_REQUEST_COMPLETE) {
-        return DefWindowProc(window, message, 0, lParam);
-    }
-
-    RequestCompletion* completion = reinterpret_cast<RequestCompletion*>(lParam);
-    joinCompletedWorker();
     g_requestActive = false;
     clearStatusMessage();
 
     if (completion->isConnectionTest) {
         if (IsWindow(completion->dialog)) {
-            if (completion->result.success) {
-                MessageBox(completion->dialog, L"Connection test successful!", L"LLM Assistant",
-                    MB_OK | MB_ICONINFORMATION);
-            } else {
-                MessageBox(completion->dialog, (L"Connection test failed: " + completion->result.error).c_str(),
-                    L"LLM Assistant", MB_OK | MB_ICONERROR);
-            }
+            setConnectionTestStatus(completion->dialog, completion->result.success, completion->result.error);
         }
     } else if (!completion->result.success) {
         MessageBox(nppData._nppHandle, completion->result.error.c_str(), L"LLM Assistant", MB_OK | MB_ICONERROR);
@@ -176,21 +163,20 @@ LRESULT CALLBACK completionWindowProc(HWND window, UINT message, WPARAM, LPARAM 
     }
 
     delete completion;
-    return 0;
 }
 
-bool createCompletionWindow()
+void dispatchCompletion(RequestCompletion* completion)
 {
-    const wchar_t* className = L"LLMAssistantCompletionWindow";
-    WNDCLASS windowClass = {};
-    windowClass.lpfnWndProc = completionWindowProc;
-    windowClass.hInstance = g_module;
-    windowClass.lpszClassName = className;
-    RegisterClass(&windowClass);
-
-    g_completionWindow = CreateWindowEx(0, className, L"", 0, 0, 0, 0, 0,
-        HWND_MESSAGE, nullptr, g_module, nullptr);
-    return g_completionWindow != nullptr;
+    CommunicationInfo info = {
+        LLM_INTERNAL_RESULT_READY,
+        L"LLMAssistant.dll",
+        completion
+    };
+    const LRESULT delivered = SendMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN,
+        reinterpret_cast<WPARAM>(L"LLMAssistant.dll"), reinterpret_cast<LPARAM>(&info));
+    if (!delivered) {
+        delete completion;
+    }
 }
 
 void startRequest(const DocumentTarget& target, const std::wstring& text, const std::wstring& prompt,
@@ -201,12 +187,8 @@ void startRequest(const DocumentTarget& target, const std::wstring& text, const 
             MB_OK | MB_ICONINFORMATION);
         return;
     }
-    if (!g_completionWindow) {
-        MessageBox(nppData._nppHandle, L"Unable to initialize the LLM request handler.", L"LLM Assistant",
-            MB_OK | MB_ICONERROR);
-        return;
-    }
 
+    joinCompletedWorker();
     g_requestActive = true;
     showStatusMessage(L"Processing LLM request...");
     g_worker = std::thread([target, text, prompt, appendOriginalText]() {
@@ -218,10 +200,11 @@ void startRequest(const DocumentTarget& target, const std::wstring& text, const 
             text,
             appendOriginalText
         };
-        if (g_shuttingDown || !PostMessage(g_completionWindow, WM_LLM_REQUEST_COMPLETE, 0,
-                reinterpret_cast<LPARAM>(completion))) {
+        if (g_shuttingDown) {
             delete completion;
+            return;
         }
+        dispatchCompletion(completion);
     });
 }
 
@@ -243,6 +226,25 @@ void runCommand(const std::wstring& basePrompt, const std::wstring& operation, b
 HMODULE g_hModule = nullptr;
 FuncItem funcItem[nbFunc];
 
+LRESULT handlePluginMessage(UINT message, WPARAM, LPARAM lParam)
+{
+    if (message == LLM_INTERNAL_RESULT_READY) {
+        processCompletion(reinterpret_cast<RequestCompletion*>(lParam));
+        return TRUE;
+    }
+
+    if (message != NPPM_MSGTOPLUGIN) {
+        return FALSE;
+    }
+    CommunicationInfo* info = reinterpret_cast<CommunicationInfo*>(lParam);
+    if (!info || info->internalMsg != LLM_INTERNAL_RESULT_READY || !info->info) {
+        return FALSE;
+    }
+
+    processCompletion(reinterpret_cast<RequestCompletion*>(info->info));
+    return TRUE;
+}
+
 void pluginInit(HANDLE hModule)
 {
     g_module = static_cast<HMODULE>(hModule);
@@ -257,7 +259,7 @@ void pluginRuntimeInit()
 
     LLMService::getInstance().initialize();
     g_serviceInitialized = true;
-    g_runtimeInitialized = createCompletionWindow();
+    g_runtimeInitialized = true;
     g_shuttingDown = false;
 }
 
@@ -270,16 +272,6 @@ void pluginCleanUp()
     g_shuttingDown = true;
     if (g_worker.joinable()) {
         g_worker.join();
-    }
-    MSG message = {};
-    while (g_completionWindow
-        && PeekMessage(&message, g_completionWindow, WM_LLM_REQUEST_COMPLETE,
-            WM_LLM_REQUEST_COMPLETE, PM_REMOVE)) {
-        delete reinterpret_cast<RequestCompletion*>(message.lParam);
-    }
-    if (g_completionWindow) {
-        DestroyWindow(g_completionWindow);
-        g_completionWindow = nullptr;
     }
     LLMService::getInstance().cleanup();
     g_runtimeInitialized = false;
@@ -389,18 +381,15 @@ void openSettings()
 void testConnection(HWND dialog, const std::wstring& apiKey)
 {
     if (g_requestActive) {
-        MessageBox(dialog, L"An LLM request is already in progress.", L"LLM Assistant", MB_OK | MB_ICONINFORMATION);
+        setConnectionTestStatus(dialog, false, L"Another LLM request is already in progress.");
         return;
     }
     if (apiKey.empty()) {
-        MessageBox(dialog, L"Please enter an API key first.", L"LLM Assistant", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    if (!g_completionWindow) {
-        MessageBox(dialog, L"Unable to initialize the LLM request handler.", L"LLM Assistant", MB_OK | MB_ICONERROR);
+        setConnectionTestStatus(dialog, false, L"Enter an API key first.");
         return;
     }
 
+    joinCompletedWorker();
     g_requestActive = true;
     showStatusMessage(L"Testing OpenAI connection...");
     g_worker = std::thread([dialog, apiKey]() {
@@ -413,11 +402,31 @@ void testConnection(HWND dialog, const std::wstring& apiKey)
             L"",
             false
         };
-        if (g_shuttingDown || !PostMessage(g_completionWindow, WM_LLM_REQUEST_COMPLETE, 0,
-                reinterpret_cast<LPARAM>(completion))) {
+        // Post the result straight to the dialog window. The dialog's own modal loop
+        // always pumps its messages, so this reliably reaches the UI thread even while
+        // the modal Settings dialog is up.
+        if (g_shuttingDown
+            || !PostMessage(dialog, WM_LLM_TEST_COMPLETE, 0, reinterpret_cast<LPARAM>(completion))) {
             delete completion;
+            g_requestActive = false;
         }
     });
+}
+
+void completeConnectionTest(HWND dialog, LPARAM lParam)
+{
+    RequestCompletion* completion = reinterpret_cast<RequestCompletion*>(lParam);
+    if (!completion) {
+        g_requestActive = false;
+        return;
+    }
+
+    g_requestActive = false;
+    clearStatusMessage();
+    if (IsWindow(dialog)) {
+        setConnectionTestStatus(dialog, completion->result.success, completion->result.error);
+    }
+    delete completion;
 }
 
 std::wstring getCurrentFileName()

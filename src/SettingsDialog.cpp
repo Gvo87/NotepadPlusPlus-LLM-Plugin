@@ -2,8 +2,61 @@
 #include "LLMService.h"
 #include "PluginDefinition.h"
 #include <commctrl.h>
+#include <algorithm>
+#include <cwctype>
 
 SettingsDialog* SettingsDialog::instance = nullptr;
+
+enum class ConnectionStatus { None, Pending, Success, Failure };
+static ConnectionStatus g_connectionStatus = ConnectionStatus::None;
+
+static void refreshConnectionStatusText(HWND dialog, const wchar_t* text)
+{
+    SetDlgItemText(dialog, IDC_CONNECTION_STATUS, text);
+    InvalidateRect(GetDlgItem(dialog, IDC_CONNECTION_STATUS), nullptr, TRUE);
+}
+
+// Maps a verbose error into a short, meaningful label for the status line.
+static const wchar_t* shortFailureReason(const std::wstring& details)
+{
+    std::wstring d = details;
+    std::transform(d.begin(), d.end(), d.begin(), towlower);
+    const auto has = [&](const wchar_t* needle) { return d.find(needle) != std::wstring::npos; };
+
+    if (has(L"quota") || has(L"billing"))       return L"No quota";
+    if (has(L"rate limit"))                      return L"Rate limited";
+    if (has(L"enter an api key"))                return L"Enter a key";
+    if (has(L"already in progress"))             return L"Busy";
+    if (has(L"timed out") || has(L"timeout"))    return L"Timed out";
+    if (has(L"incorrect api key") || has(L"invalid") || has(L"no api key") || has(L"api key"))
+        return L"Invalid key";
+    return L"Failed";
+}
+
+void setConnectionTestStatus(HWND dialog, bool succeeded, const std::wstring& details)
+{
+    if (!IsWindow(dialog)) {
+        return;
+    }
+
+    g_connectionStatus = succeeded ? ConnectionStatus::Success : ConnectionStatus::Failure;
+    const std::wstring text = succeeded
+        ? std::wstring(L"Connected")
+        : L"Failed: " + std::wstring(shortFailureReason(details));
+    refreshConnectionStatusText(dialog, text.c_str());
+    EnableWindow(GetDlgItem(dialog, IDC_TEST_CONNECTION), TRUE);
+}
+
+void setConnectionTestPending(HWND dialog)
+{
+    if (!IsWindow(dialog)) {
+        return;
+    }
+
+    g_connectionStatus = ConnectionStatus::Pending;
+    refreshConnectionStatusText(dialog, L"Testing...");
+    EnableWindow(GetDlgItem(dialog, IDC_TEST_CONNECTION), FALSE);
+}
 
 SettingsDialog::SettingsDialog() : hDlg(NULL)
 {
@@ -32,7 +85,27 @@ INT_PTR CALLBACK SettingsDialog::dialogProc(HWND hDlg, UINT message, WPARAM wPar
     if (instance) {
         instance->hDlg = hDlg;
     }
-    
+
+    if (message == WM_LLM_TEST_COMPLETE) {
+        completeConnectionTest(hDlg, lParam);
+        return TRUE;
+    }
+
+    if (message == WM_CTLCOLORSTATIC
+        && reinterpret_cast<HWND>(lParam) == GetDlgItem(hDlg, IDC_CONNECTION_STATUS)) {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        COLORREF color;
+        switch (g_connectionStatus) {
+            case ConnectionStatus::Success: color = RGB(0, 140, 0); break;
+            case ConnectionStatus::Failure: color = RGB(200, 0, 0); break;
+            case ConnectionStatus::Pending: color = RGB(110, 110, 110); break;
+            default:                        color = GetSysColor(COLOR_WINDOWTEXT); break;
+        }
+        SetTextColor(hdc, color);
+        SetBkMode(hdc, TRANSPARENT);
+        return reinterpret_cast<INT_PTR>(GetSysColorBrush(COLOR_3DFACE));
+    }
+
     switch (message) {
         case WM_INITDIALOG:
             if (instance) {
@@ -100,5 +173,6 @@ void SettingsDialog::onTestConnection()
 {
     wchar_t buffer[512] = {};
     GetDlgItemText(hDlg, IDC_API_KEY, buffer, sizeof(buffer) / sizeof(wchar_t));
+    setConnectionTestPending(hDlg);
     testConnection(hDlg, buffer);
 }

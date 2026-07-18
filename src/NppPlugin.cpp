@@ -64,7 +64,7 @@ extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode)
 
 extern "C" __declspec(dllexport) LRESULT messageProc(UINT Message, WPARAM wParam, LPARAM lParam)
 {
-    return TRUE;
+    return handlePluginMessage(Message, wParam, lParam);
 }
 
 extern "C" __declspec(dllexport) BOOL isUnicode()

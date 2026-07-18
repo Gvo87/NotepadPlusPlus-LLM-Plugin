@@ -19,12 +19,13 @@
 #define SCI_PASTE 2302
 
 // Notepad++ messages
+#define NPPMSG (WM_USER + 1000)
 #define NPPM_GETCURRENTSCINTILLA (NPPMSG + 4)
 #define NPPM_GETFILENAME (NPPMSG + 29)
-#define NPPN_SHUTDOWN (NPPN_FIRST + 16)
+#define NPPM_MSGTOPLUGIN (NPPMSG + 47)
 
-#define NPPMSG 1024
 #define NPPN_FIRST 1000
+#define NPPN_SHUTDOWN (NPPN_FIRST + 9)
 
 // Forward declarations
 struct SCNotification;
@@ -76,6 +77,12 @@ struct SCNotification {
     int token;
     int annotationLinesAdded;
     int updated;
+};
+
+struct CommunicationInfo {
+    long internalMsg;
+    const wchar_t* srcModuleName;
+    void* info;
 };
 
 // Plugin interface functions

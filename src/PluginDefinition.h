@@ -6,6 +6,11 @@
 //
 #include "PluginInterface.h"
 
+// Posted directly to the Settings dialog window when a connection test finishes.
+// Delivering the result to the dialog's own modal message loop is reliable, unlike
+// relaying it back through Notepad++ while the plugin's modal dialog is running.
+#define WM_LLM_TEST_COMPLETE (WM_APP + 110)
+
 //-------------------------------------//
 //-- STEP 1. DEFINE YOUR PLUGIN NAME --//
 //-------------------------------------//
@@ -32,6 +37,7 @@ void pluginRuntimeInit();
 // It will be called while plugin unloading
 void pluginCleanUp();
 void noteDocumentModified(HWND scintilla);
+LRESULT handlePluginMessage(UINT message, WPARAM wParam, LPARAM lParam);
 
 //
 //Initialization of your plugin commands
@@ -60,6 +66,11 @@ void translateText();
 void summarizeText();
 void openSettings();
 void testConnection(HWND dialog, const std::wstring& apiKey);
+
+// Finalizes a connection test on the UI thread. Called by the Settings dialog when it
+// receives WM_LLM_TEST_COMPLETE. Resets request state, clears the status bar, updates
+// the dialog, and frees the completion payload passed as lParam.
+void completeConnectionTest(HWND dialog, LPARAM lParam);
 
 // Get plugin module handle
 HMODULE getPluginModuleHandle();
