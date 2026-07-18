@@ -21,6 +21,7 @@
 #define WM_LLM_REQUEST_COMPLETE (WM_APP + 110)
 
 std::wstring getContextualPrompt(const std::wstring& basePrompt, const std::wstring& operation);
+NppData nppData;
 
 namespace {
 struct DocumentTarget
@@ -241,7 +242,6 @@ void runCommand(const std::wstring& basePrompt, const std::wstring& operation, b
 
 HMODULE g_hModule = nullptr;
 FuncItem funcItem[nbFunc];
-NppData nppData;
 
 void pluginInit(HANDLE hModule)
 {
