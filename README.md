@@ -32,7 +32,18 @@ A powerful Notepad++ plugin that integrates Large Language Model (LLM) capabilit
 
 ## 📦 Installation
 
-### Quick Installation
+### Via Plugins Admin (recommended)
+Once the plugin is accepted into the official
+[nppPluginList](https://github.com/notepad-plus-plus/nppPluginList), you can install
+it directly from Notepad++:
+1. Open **Plugins → Plugins Admin…**
+2. On the **Available** tab, search for **LLM Assistant**
+3. Check the box and click **Install** — Notepad++ handles the download and future updates automatically
+
+Maintainers: see [`packaging/PLUGINS_ADMIN_SUBMISSION.md`](packaging/PLUGINS_ADMIN_SUBMISSION.md)
+for how releases and the Plugins Admin listing are produced.
+
+### Quick Installation (manual)
 1. **Download** the plugin: `LLMAssistant.dll`
 2. **Create directory**: `C:\Program Files\Notepad++\plugins\LLMAssistant\`
 3. **Copy file**: Place `LLMAssistant.dll` in the created directory

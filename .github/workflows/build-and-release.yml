@@ -1,0 +1,109 @@
+name: build-and-release
+
+# Builds the x64 plugin, runs the Catch2 test suite, and packages a
+# Plugins-Admin-ready zip.
+#
+#   * push / PR         -> build + test + upload the zip as a CI artifact
+#   * push a "v*" tag   -> additionally publish a GitHub Release with the zip
+#                          and print the SHA-256 needed for the nppPluginList PR
+#
+# The DLL is placed at the ROOT of the zip and named exactly LLMAssistant.dll,
+# which is what Notepad++ Plugins Admin requires.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build plugin (x64 Release)
+        run: >
+          msbuild LLMAssistant.vcxproj
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:PlatformToolset=v143
+          /p:WindowsTargetPlatformVersion=10.0
+          /m
+
+      - name: Configure tests (CMake)
+        run: cmake -S . -B CMakeBuild
+
+      - name: Build tests
+        run: cmake --build CMakeBuild --config Debug
+
+      - name: Run tests
+        run: ctest --test-dir CMakeBuild --output-on-failure -C Debug
+
+      - name: Package Plugins-Admin zip
+        id: package
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $ver = "${{ github.ref_name }}" -replace '^v', ''
+          } else {
+            $ver = "dev"
+          }
+          $zip = "LLMAssistant_v${ver}_x64.zip"
+
+          # DLL must sit at the zip root and be named exactly LLMAssistant.dll.
+          Copy-Item "x64\Release\LLMAssistant.dll" ".\LLMAssistant.dll" -Force
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path ".\LLMAssistant.dll" -DestinationPath $zip -Force
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToUpper()
+          "zip=$zip"        >> $env:GITHUB_OUTPUT
+          "version=$ver"    >> $env:GITHUB_OUTPUT
+          "sha256=$hash"    >> $env:GITHUB_OUTPUT
+
+          Write-Host "==============================================="
+          Write-Host "Package : $zip"
+          Write-Host "SHA-256 : $hash   <-- use as \"id\" in pl.x64.json"
+          Write-Host "==============================================="
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMAssistant-x64
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}
+          generate_release_notes: true
+          body: |
+            ### Notepad++ Plugins Admin metadata
+
+            Add / update this in `nppPluginList` (`src/pl.x64.json`):
+
+            ```json
+            {
+              "folder-name": "LLMAssistant",
+              "display-name": "LLM Assistant",
+              "version": "${{ steps.package.outputs.version }}",
+              "id": "${{ steps.package.outputs.sha256 }}",
+              "repository": "${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.package.outputs.zip }}",
+              "description": "AI-powered text processing (enhance, translate, summarize, grammar, code) via the OpenAI API, directly inside Notepad++.",
+              "author": "Gvo87",
+              "homepage": "${{ github.server_url }}/${{ github.repository }}"
+            }
+            ```
+
+            `id` is the SHA-256 of the attached zip: `${{ steps.package.outputs.sha256 }}`

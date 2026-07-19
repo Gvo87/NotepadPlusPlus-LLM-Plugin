@@ -1,5 +1,40 @@
 #include "resource.h"
+#include "Version.h"
 #include <windows.h>
+
+// Version information (read by Notepad++ Plugins Admin for update detection)
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION LLM_VERSION_COMMA
+ PRODUCTVERSION LLM_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Gvo87"
+            VALUE "FileDescription", "LLM Assistant - AI text processing for Notepad++"
+            VALUE "FileVersion", LLM_VERSION_STRING
+            VALUE "InternalName", "LLMAssistant"
+            VALUE "LegalCopyright", "Copyright (C) 2026"
+            VALUE "OriginalFilename", "LLMAssistant.dll"
+            VALUE "ProductName", "LLM Assistant"
+            VALUE "ProductVersion", LLM_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
 
 // Settings Dialog
 IDD_SETTINGS DIALOGEX 0, 0, 300, 178

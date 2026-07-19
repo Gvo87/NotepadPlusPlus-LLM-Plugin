@@ -2,3 +2,7 @@
 x64/
 CMakeBuild/
 _deps/
+
+# Release packaging output
+dist/
+*.zip
