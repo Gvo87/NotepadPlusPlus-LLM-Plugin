@@ -73,7 +73,12 @@ Remove-Item $staging -Recurse -Force
 
 $sha = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToUpper()
 
-$repoUrl = (git config --get remote.origin.url) 2>$null
+# Guard the git lookup: on machines without Git in PATH this must not abort the
+# script (ErrorActionPreference is "Stop"); fall back to the known repo URL.
+$repoUrl = $null
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    try { $repoUrl = (& git config --get remote.origin.url) 2>$null } catch { $repoUrl = $null }
+}
 if ($repoUrl) { $repoUrl = $repoUrl -replace '\.git$', '' } else { $repoUrl = "https://github.com/Gvo87/NotepadPlusPlus-LLM-Plugin" }
 $downloadUrl = "$repoUrl/releases/download/v$Version/$zipName"
 

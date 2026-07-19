@@ -103,6 +103,15 @@ void createMessageWindow()
 void destroyMessageWindow()
 {
     if (g_messageWindow) {
+        // Drain any WM_LLM_RESULT messages a worker thread posted but that the
+        // UI thread hasn't processed yet. DestroyWindow would otherwise silently
+        // discard them, leaking the heap-allocated RequestCompletion payloads
+        // (and leaving those results unapplied).
+        MSG msg;
+        while (PeekMessage(&msg, g_messageWindow, WM_LLM_RESULT, WM_LLM_RESULT, PM_REMOVE)) {
+            delete reinterpret_cast<RequestCompletion*>(msg.lParam);
+        }
+        KillTimer(g_messageWindow, kStatusClearTimerId);
         DestroyWindow(g_messageWindow);
         g_messageWindow = nullptr;
     }
