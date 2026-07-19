@@ -146,7 +146,34 @@ void SettingsDialog::onInitDialog()
     // Set current API key in the text field
     std::wstring currentKey = LLMService::getInstance().getApiKey();
     SetDlgItemText(hDlg, IDC_API_KEY, currentKey.c_str());
-    
+
+    // Populate the model selector with newer OpenAI models (gpt-4o and above).
+    // The combo is editable, so a brand-new model name can also be typed in
+    // without needing a plugin rebuild.
+    HWND combo = GetDlgItem(hDlg, IDC_MODEL_COMBO);
+    static const wchar_t* const kModels[] = {
+        L"gpt-5",
+        L"gpt-5-mini",
+        L"gpt-5-nano",
+        L"gpt-5-chat-latest",
+        L"gpt-4.1",
+        L"gpt-4.1-mini",
+        L"gpt-4.1-nano",
+        L"gpt-4o"
+    };
+    for (const wchar_t* model : kModels) {
+        SendMessage(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(model));
+    }
+
+    const std::wstring currentModel = LLMService::getInstance().getModel();
+    const LRESULT index = SendMessage(combo, CB_FINDSTRINGEXACT, static_cast<WPARAM>(-1),
+        reinterpret_cast<LPARAM>(currentModel.c_str()));
+    if (index != CB_ERR) {
+        SendMessage(combo, CB_SETCURSEL, static_cast<WPARAM>(index), 0);
+    } else {
+        SetWindowText(combo, currentModel.c_str());
+    }
+
     // Set focus to API key field
     SetFocus(GetDlgItem(hDlg, IDC_API_KEY));
 }
@@ -154,11 +181,16 @@ void SettingsDialog::onInitDialog()
 void SettingsDialog::onOK()
 {
     // Get API key from text field
-    wchar_t buffer[512];
+    wchar_t buffer[512] = {};
     GetDlgItemText(hDlg, IDC_API_KEY, buffer, sizeof(buffer) / sizeof(wchar_t));
-    
+
+    // Get selected/typed model from the combo box
+    wchar_t modelBuffer[256] = {};
+    GetDlgItemText(hDlg, IDC_MODEL_COMBO, modelBuffer, sizeof(modelBuffer) / sizeof(wchar_t));
+
     // Save to LLM service
     LLMService::getInstance().setApiKey(buffer);
+    LLMService::getInstance().setModel(modelBuffer);
     LLMService::getInstance().saveSettings();
     
     MessageBox(hDlg, L"Settings saved successfully!", L"LLM Assistant", MB_OK | MB_ICONINFORMATION);
@@ -173,6 +205,8 @@ void SettingsDialog::onTestConnection()
 {
     wchar_t buffer[512] = {};
     GetDlgItemText(hDlg, IDC_API_KEY, buffer, sizeof(buffer) / sizeof(wchar_t));
+    wchar_t modelBuffer[256] = {};
+    GetDlgItemText(hDlg, IDC_MODEL_COMBO, modelBuffer, sizeof(modelBuffer) / sizeof(wchar_t));
     setConnectionTestPending(hDlg);
-    testConnection(hDlg, buffer);
+    testConnection(hDlg, buffer, modelBuffer);
 }

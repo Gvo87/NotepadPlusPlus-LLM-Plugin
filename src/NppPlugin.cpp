@@ -55,7 +55,12 @@ extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode)
             break;
 
         default:
-            if (notifyCode->nmhdr.code == 2008) { // SCN_MODIFIED
+            // Only count actual text inserts/deletes as document changes.
+            // Scintilla also fires SCN_MODIFIED for styling, folding and markers,
+            // which would otherwise cause the plugin to think the user edited the
+            // document while an LLM request was running and discard the response.
+            if (notifyCode->nmhdr.code == SCN_MODIFIED
+                && (notifyCode->modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT))) {
                 noteDocumentModified(notifyCode->nmhdr.hwndFrom);
             }
             break;

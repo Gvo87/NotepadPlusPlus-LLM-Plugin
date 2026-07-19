@@ -9,9 +9,14 @@
 
 class LLMService
 {
+public:
+    // Default model used when none has been configured yet.
+    static const wchar_t* defaultModel();
+
 private:
     static LLMService* instance;
     std::wstring apiKey;
+    std::wstring model;
     std::wstring apiUrl;
     mutable std::mutex settingsMutex;
     
@@ -38,11 +43,14 @@ public:
     // Configuration
     void setApiKey(const std::wstring& key);
     std::wstring getApiKey() const;
+    void setModel(const std::wstring& modelName);
+    std::wstring getModel() const;
     
     // Main LLM call function. This method is safe to call from a background thread.
-    LLMResult callLLM(const std::wstring& prompt, const std::wstring& model = L"gpt-3.5-turbo");
+    // callLLM uses the configured API key and model.
+    LLMResult callLLM(const std::wstring& prompt);
     LLMResult callLLMWithApiKey(const std::wstring& prompt, const std::wstring& apiKey,
-        const std::wstring& model = L"gpt-3.5-turbo");
+        const std::wstring& model);
     
     // Utility functions
     bool isConfigured() const;

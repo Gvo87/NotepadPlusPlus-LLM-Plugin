@@ -11,6 +11,10 @@
 // relaying it back through Notepad++ while the plugin's modal dialog is running.
 #define WM_LLM_TEST_COMPLETE (WM_APP + 110)
 
+// Posted from the worker thread to the plugin's hidden message-only window when a
+// text-processing LLM request finishes. lParam carries the RequestCompletion*.
+#define WM_LLM_RESULT (WM_APP + 111)
+
 //-------------------------------------//
 //-- STEP 1. DEFINE YOUR PLUGIN NAME --//
 //-------------------------------------//
@@ -65,7 +69,7 @@ void checkGrammar();
 void translateText();
 void summarizeText();
 void openSettings();
-void testConnection(HWND dialog, const std::wstring& apiKey);
+void testConnection(HWND dialog, const std::wstring& apiKey, const std::wstring& model);
 
 // Finalizes a connection test on the UI thread. Called by the Settings dialog when it
 // receives WM_LLM_TEST_COMPLETE. Resets request state, clears the status bar, updates
