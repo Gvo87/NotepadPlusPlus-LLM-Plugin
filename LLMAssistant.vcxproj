@@ -99,6 +99,7 @@
     <ClInclude Include="src\LLMService.h" />
     <ClInclude Include="src\LLMResult.h" />
     <ClInclude Include="src\menuCmdID.h" />
+    <ClInclude Include="src\ModelParams.h" />
     <ClInclude Include="src\PluginDefinition.h" />
     <ClInclude Include="src\PluginInterface.h" />
     <ClInclude Include="src\RequestTarget.h" />
@@ -109,6 +110,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\LLMService.cpp" />
+    <ClCompile Include="src\ModelParams.cpp" />
     <ClCompile Include="src\NppPlugin.cpp" />
     <ClCompile Include="src\PluginDefinition.cpp" />
     <ClCompile Include="src\RequestTarget.cpp" />

@@ -1,3 +1,4 @@
+#include "ModelParams.h"
 #include "RequestTarget.h"
 #include "SimpleJson.h"
 #include "TextCodec.h"
@@ -40,6 +41,48 @@ TEST_CASE("OpenAI errors are recognized separately from content")
     REQUIRE(parser.hasError());
     REQUIRE(parser.getErrorMessage() == "Incorrect API key provided");
     REQUIRE(parser.extractContent().empty());
+}
+
+TEST_CASE("GPT-5 and newer models use reasoning parameters")
+{
+    REQUIRE(isReasoningModel(L"gpt-6-luna"));
+    REQUIRE(isReasoningModel(L"gpt-6-astra"));
+    REQUIRE(isReasoningModel(L"gpt-6.1-sol"));
+    REQUIRE(isReasoningModel(L"gpt-5.6-terra"));
+    REQUIRE(isReasoningModel(L"GPT-5-mini"));
+    REQUIRE(isReasoningModel(L"o4-mini"));
+}
+
+TEST_CASE("Legacy and chat-tuned models keep classic parameters")
+{
+    REQUIRE_FALSE(isReasoningModel(L"gpt-4o"));
+    REQUIRE_FALSE(isReasoningModel(L"gpt-4.1-mini"));
+    REQUIRE_FALSE(isReasoningModel(L"gpt-3.5-turbo"));
+    REQUIRE_FALSE(isReasoningModel(L"gpt-5-chat-latest"));
+    REQUIRE_FALSE(isReasoningModel(L"chatgpt-4o-latest"));
+}
+
+TEST_CASE("Deprecated and shut-down models are retired")
+{
+    REQUIRE(isRetiredModel(L"gpt-4o"));
+    REQUIRE(isRetiredModel(L"GPT-4o-mini"));
+    REQUIRE(isRetiredModel(L"gpt-4.1-nano"));
+    REQUIRE(isRetiredModel(L"gpt-3.5-turbo"));
+    REQUIRE(isRetiredModel(L"gpt-5"));
+    REQUIRE(isRetiredModel(L"gpt-5-mini"));
+    REQUIRE(isRetiredModel(L"gpt-5-chat-latest"));
+    REQUIRE(isRetiredModel(L"gpt-5.1"));
+    REQUIRE(isRetiredModel(L"gpt-5.2-chat-latest"));
+}
+
+TEST_CASE("Current models are not retired")
+{
+    REQUIRE_FALSE(isRetiredModel(L"gpt-6-luna"));
+    REQUIRE_FALSE(isRetiredModel(L"gpt-6.1-sol"));
+    REQUIRE_FALSE(isRetiredModel(L"gpt-5.6-terra"));
+    REQUIRE_FALSE(isRetiredModel(L"gpt-5.5"));
+    REQUIRE_FALSE(isRetiredModel(L"gpt-5.2"));
+    REQUIRE_FALSE(isRetiredModel(L"o4-mini"));
 }
 
 TEST_CASE("Selection fallback captures the complete document range")

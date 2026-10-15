@@ -1,9 +1,8 @@
 #include "LLMService.h"
+#include "ModelParams.h"
 #include "SimpleJson.h"
 #include "TextCodec.h"
 
-#include <algorithm>
-#include <cwctype>
 #include <mutex>
 #include <sstream>
 
@@ -12,26 +11,15 @@
 namespace {
 constexpr DWORD kRequestTimeoutMilliseconds = 60000;
 
+// Version of the saved settings. Bump it, and update isRetiredModel, to switch
+// saved retired models to the default again.
+//   1: retired models (gpt-4o, gpt-4.1, gpt-5, ...) switched to gpt-6-luna.
+constexpr DWORD kSettingsVersion = 1;
+
 std::wstring lastErrorMessage(const wchar_t* operation)
 {
     const DWORD error = GetLastError();
     return std::wstring(operation) + L" failed (Win32 error " + std::to_wstring(error) + L").";
-}
-
-// Reasoning models (GPT-5 family and the o-series) reject the classic
-// "max_tokens" and any non-default "temperature". They require
-// "max_completion_tokens" and no temperature override. The chat-tuned
-// variant "gpt-5-chat*" behaves like gpt-4o and keeps the classic params.
-bool isReasoningModel(const std::wstring& model)
-{
-    std::wstring name = model;
-    std::transform(name.begin(), name.end(), name.begin(), towlower);
-    const auto startsWith = [&](const wchar_t* prefix) { return name.rfind(prefix, 0) == 0; };
-
-    if (startsWith(L"gpt-5")) {
-        return !startsWith(L"gpt-5-chat");
-    }
-    return startsWith(L"o1") || startsWith(L"o3") || startsWith(L"o4");
 }
 }
 
@@ -39,7 +27,8 @@ LLMService* LLMService::instance = nullptr;
 
 const wchar_t* LLMService::defaultModel()
 {
-    return L"gpt-4o";
+    // OpenAI's fast, low-cost model and its recommended replacement for gpt-4o.
+    return L"gpt-6-luna";
 }
 
 LLMService::LLMService()
@@ -127,7 +116,7 @@ LLMResult LLMService::callLLMWithApiKey(
         builder.addString("model", modelUtf8);
         if (isReasoningModel(model)) {
             // Reasoning tokens are billed against this budget too, so keep it
-            // generous to avoid empty responses from the GPT-5 family.
+            // generous to avoid empty responses from reasoning models.
             builder.addNumber("max_completion_tokens", 4000);
         } else {
             builder.addNumber("max_tokens", 1000);
@@ -304,7 +293,22 @@ void LLMService::loadSettings()
         modelBuffer[modelSize / sizeof(wchar_t)] = L'\0';
         setModel(modelBuffer);
     }
+
+    DWORD settingsVersion = 0;
+    DWORD versionSize = sizeof(settingsVersion);
+    DWORD versionType = REG_DWORD;
+    if (RegQueryValueEx(key, L"SettingsVersion", nullptr, &versionType,
+            reinterpret_cast<LPBYTE>(&settingsVersion), &versionSize) != ERROR_SUCCESS
+        || versionType != REG_DWORD) {
+        settingsVersion = 0;
+    }
     RegCloseKey(key);
+
+    // Switch a retired model to the default once. saveSettings records the
+    // version, so a retired model the user picks again afterwards is kept.
+    if (settingsVersion < kSettingsVersion && isRetiredModel(getModel())) {
+        setModel(defaultModel());
+    }
 }
 
 void LLMService::saveSettings()
@@ -322,5 +326,7 @@ void LLMService::saveSettings()
     const std::wstring currentModel = getModel();
     const DWORD modelSize = static_cast<DWORD>((currentModel.length() + 1) * sizeof(wchar_t));
     RegSetValueEx(key, L"Model", 0, REG_SZ, reinterpret_cast<const BYTE*>(currentModel.c_str()), modelSize);
+    RegSetValueEx(key, L"SettingsVersion", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&kSettingsVersion),
+        sizeof(kSettingsVersion));
     RegCloseKey(key);
 }
