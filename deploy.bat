@@ -1,46 +1,30 @@
 @echo off
+setlocal
+REM Builds the plugin and copies it into C:\Program Files\Notepad++\plugins.
+REM Run it as Administrator, since it writes to Program Files.
+
+REM Work from the repo folder, also when started elevated (cwd is System32 then)
+cd /d "%~dp0"
+
 echo ========================================
 echo LLM Assistant Plugin - Auto Deploy
 echo ========================================
 
+REM Check for admin rights first, so a run without them stops before it
+REM builds anything or closes Notepad++.
+fltmc >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Run this script as Administrator, because it copies the plugin
+    echo into C:\Program Files\Notepad++. Right-click deploy.bat and choose
+    echo "Run as administrator".
+    pause
+    exit /b 1
+)
+
 echo.
 echo [1/4] Building plugin...
-echo Setting up Visual Studio 2022 environment...
-
-REM Set Visual Studio 2022 environment
-set VS2022_PATH="C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-set VS2022_PRO_PATH="C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"
-set VS2022_ENT_PATH="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
-
-REM Try to find and setup VS2022 environment
-if exist %VS2022_PATH% (
-    echo Found Visual Studio 2022 Community
-    call %VS2022_PATH%
-) else if exist %VS2022_PRO_PATH% (
-    echo Found Visual Studio 2022 Professional
-    call %VS2022_PRO_PATH%
-) else if exist %VS2022_ENT_PATH% (
-    echo Found Visual Studio 2022 Enterprise
-    call %VS2022_ENT_PATH%
-) else (
-    echo ERROR: Visual Studio 2022 not found in standard locations.
-    echo Please run this from a Visual Studio 2022 Developer Command Prompt.
-    pause
-    exit /b 1
-)
-
-REM Check if MSBuild is available after setting up environment
-where msbuild >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: MSBuild not found. Please ensure Visual Studio 2022 is properly installed.
-    pause
-    exit /b 1
-)
-
-echo Building with MSBuild...
-msbuild LLMAssistant.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
-
-if %ERRORLEVEL% neq 0 (
+call "%~dp0build.bat" /nopause
+if errorlevel 1 (
     echo ERROR: Build failed!
     pause
     exit /b 1
@@ -49,12 +33,11 @@ echo Build completed successfully!
 
 echo.
 echo [2/4] Closing Notepad++...
-taskkill /f /im notepad++.exe >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    echo Notepad++ closed successfully
-    timeout /t 2 /nobreak >nul
-) else (
-    echo Notepad++ was not running
+call :close_notepadpp
+if errorlevel 1 (
+    echo Deployment cancelled. The plugin was not copied.
+    pause
+    exit /b 1
 )
 
 echo.
@@ -98,3 +81,42 @@ if /i "%choice%"=="Y" (
 echo.
 echo Press any key to exit...
 pause >nul
+exit /b 0
+
+REM Closes Notepad++ the way its own close button does (taskkill without /f
+REM sends WM_CLOSE), so it can ask to save unsaved files. Returns 1 if
+REM Notepad++ is still running and the user cancels.
+:close_notepadpp
+call :notepadpp_running
+if errorlevel 1 (
+    echo Notepad++ was not running
+    exit /b 0
+)
+echo Asking Notepad++ to close. If it asks to save changes, answer it to continue.
+taskkill /im notepad++.exe >nul 2>&1
+for /l %%i in (1,1,20) do (
+    timeout /t 1 /nobreak >nul
+    call :notepadpp_running
+    if errorlevel 1 (
+        echo Notepad++ closed successfully
+        exit /b 0
+    )
+)
+:close_notepadpp_wait
+echo.
+echo Notepad++ is still running. It may be showing a save prompt, or a save
+echo was cancelled. Close Notepad++ yourself, saving your work as needed.
+choice /c RC /n /m "Press R once Notepad++ is closed, or C to cancel: "
+if errorlevel 2 exit /b 1
+call :notepadpp_running
+if errorlevel 1 (
+    echo Notepad++ closed successfully
+    exit /b 0
+)
+goto :close_notepadpp_wait
+
+REM Sets errorlevel 0 if notepad++.exe is running, 1 if not
+:notepadpp_running
+tasklist /fi "imagename eq notepad++.exe" /nh 2>nul | findstr /i /l /c:"notepad++.exe" >nul
+if errorlevel 1 exit /b 1
+exit /b 0

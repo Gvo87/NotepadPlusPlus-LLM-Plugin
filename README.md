@@ -88,8 +88,8 @@ The **Custom Prompt** option allows maximum flexibility:
 ## 🔧 Building from Source
 
 ### Prerequisites
-- **Visual Studio 2022** with C++ development tools
-- **Windows 10 SDK** (latest version)
+- **Visual Studio 2022 or later** (any edition, or Build Tools) with the "Desktop development with C++" workload
+- **Windows SDK** (installed with that workload)
 - **Git** (for cloning the repository)
 
 ### Build Steps
@@ -107,10 +107,12 @@ cd NotepadPlusPlus-LLM-Plugin
 
 ### Development Environment
 The build script automatically:
-- Detects Visual Studio 2022 installation
+- Finds the newest Visual Studio with the C++ tools (using `vswhere`)
 - Sets up the build environment
-- Compiles with platform toolset v143
+- Compiles with the project's platform toolset (v145), or with the newest installed toolset if v145 is missing (for example v143 on Visual Studio 2022)
 - Links required Windows libraries
+
+`deploy.bat` builds the same way, then copies the DLL into `C:\Program Files\Notepad++\plugins\LLMAssistant\`. Run it as Administrator. It asks Notepad++ to close normally, so you get the usual prompt to save unsaved files, and it won't copy anything while Notepad++ is still open.
 
 ### Automated Tests
 The portable request, JSON, and UTF-8 regression tests use Catch2. Configure them with CMake:
