@@ -112,7 +112,7 @@ The build script automatically:
 - Compiles with the project's platform toolset (v145), or with the newest installed toolset if v145 is missing (for example v143 on Visual Studio 2022)
 - Links required Windows libraries
 
-`deploy.bat` builds the same way, then copies the DLL into `C:\Program Files\Notepad++\plugins\LLMAssistant\`. Run it as Administrator. It asks Notepad++ to close normally, so you get the usual prompt to save unsaved files, and it won't copy anything while Notepad++ is still open.
+`deploy.bat` builds the same way, then copies the DLL into `C:\Program Files\Notepad++\plugins\LLMAssistant\`. Run it as Administrator. It closes Notepad++ the same way its close button does, so unsaved files are handled as usual: Notepad++ asks whether to save them, or, if session snapshot is on, keeps them in its backup for the next start. It won't copy anything while Notepad++ is still open.
 
 ### Automated Tests
 The portable request, JSON, and UTF-8 regression tests use Catch2. Configure them with CMake:

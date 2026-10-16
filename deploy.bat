@@ -84,8 +84,9 @@ pause >nul
 exit /b 0
 
 REM Closes Notepad++ the way its own close button does (taskkill without /f
-REM sends WM_CLOSE), so it can ask to save unsaved files. Returns 1 if
-REM Notepad++ is still running and the user cancels.
+REM sends WM_CLOSE), so it asks to save unsaved files, or keeps them in its
+REM backup when session snapshot is on. Returns 1 if Notepad++ is still
+REM running and the user cancels.
 :close_notepadpp
 call :notepadpp_running
 if errorlevel 1 (
