@@ -3,13 +3,18 @@
 ## Quick Start
 
 ### Step 1: Download
-- Get the plugin file: `LLMAssistant.dll` from the `x64\Release\` directory
+- Get the plugin file `LLMAssistant.dll` for your Notepad++ architecture:
+  - from a [release](https://github.com/Gvo87/NotepadPlusPlus-LLM-Plugin/releases/latest): `LLMAssistant_v<version>_x64.zip`, `_x86.zip` (32-bit) or `_arm64.zip`
+  - or from your own build: `x64\Release\`, `Win32\Release\` or `ARM64\Release\`
+- **?** > **About Notepad++** shows whether your Notepad++ is 64-bit, 32-bit or ARM64. Notepad++ can't load a DLL built for another architecture.
 
 ### Step 2: Install
 1. **Create the plugin directory:**
    ```
    C:\Program Files\Notepad++\plugins\LLMAssistant\
    ```
+   For 32-bit Notepad++ on 64-bit Windows it's
+   `C:\Program Files (x86)\Notepad++\plugins\LLMAssistant\`.
 
 2. **Copy the plugin file:**
    - Place `LLMAssistant.dll` in the directory you just created
@@ -52,7 +57,7 @@ After installation, you'll see these 8 options in `Plugins > LLM Assistant`:
 
 ### Plugin doesn't appear
 - Check the directory path: `C:\Program Files\Notepad++\plugins\LLMAssistant\`
-- Make sure you have 64-bit Notepad++
+- Make sure the DLL matches your Notepad++ architecture (x64, x86 or ARM64)
 - Restart Notepad++ completely
 
 ### "API key not configured" error
@@ -65,8 +70,8 @@ After installation, you'll see these 8 options in `Plugins > LLM Assistant`:
 
 ## System Requirements
 
-- **Notepad++**: Version 7.0+ (64-bit recommended)
-- **Windows**: 10 or later (64-bit)
+- **Notepad++**: Version 7.0+, 64-bit (x64), 32-bit (x86) or ARM64
+- **Windows**: 10 or later
 - **Internet**: Required for API calls
 - **OpenAI API Key**: Required for LLM functionality
 

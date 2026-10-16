@@ -25,10 +25,10 @@ A powerful Notepad++ plugin that integrates Large Language Model (LLM) capabilit
 
 ## 📋 Requirements
 
-- **Notepad++**: Version 7.0 or later (64-bit recommended)
+- **Notepad++**: Version 7.0 or later: 64-bit (x64), 32-bit (x86) or ARM64
 - **OpenAI API Key**: Get one from [OpenAI Platform](https://platform.openai.com/api-keys)
 - **Operating System**: Windows 10 or later
-- **Architecture**: 64-bit Windows (plugin compiled for x64)
+- **Architecture**: each release has one zip per Notepad++ architecture (`_x64`, `_x86`, `_arm64`). Use the one that matches your Notepad++. Plugins Admin picks it for you.
 
 ## 📦 Installation
 
@@ -44,8 +44,8 @@ Maintainers: see [`packaging/PLUGINS_ADMIN_SUBMISSION.md`](packaging/PLUGINS_ADM
 for how releases and the Plugins Admin listing are produced.
 
 ### Quick Installation (manual)
-1. **Download** the plugin: `LLMAssistant.dll`
-2. **Create directory**: `C:\Program Files\Notepad++\plugins\LLMAssistant\`
+1. **Download** the zip for your Notepad++ from the [latest release](https://github.com/Gvo87/NotepadPlusPlus-LLM-Plugin/releases/latest) (`_x64`, `_x86` or `_arm64`) and extract `LLMAssistant.dll`
+2. **Create directory**: `C:\Program Files\Notepad++\plugins\LLMAssistant\` (32-bit Notepad++ on 64-bit Windows: `C:\Program Files (x86)\Notepad++\plugins\LLMAssistant\`)
 3. **Copy file**: Place `LLMAssistant.dll` in the created directory
 4. **Restart** Notepad++
 5. **Configure**: Go to `Plugins > LLM Assistant > Settings` and enter your OpenAI API key
@@ -179,7 +179,7 @@ API keys are stored in: `HKEY_CURRENT_USER\Software\LLMAssistant\APIKey`
 **Plugin doesn't appear in menu**
 - Ensure DLL is in correct directory: `C:\Program Files\Notepad++\plugins\LLMAssistant\`
 - Restart Notepad++ completely
-- Check if you have 64-bit Notepad++ (plugin is compiled for x64)
+- Check that the DLL matches your Notepad++ architecture (x64, x86 or ARM64). Notepad++ can't load a DLL built for another one. **?** > **About Notepad++** shows which one you have
 
 **"API key not configured" error**
 - Go to Settings and enter your OpenAI API key
@@ -197,7 +197,7 @@ API keys are stored in: `HKEY_CURRENT_USER\Software\LLMAssistant\APIKey`
 ### Debug Information
 If you encounter issues, check:
 1. Notepad++ version (should be 7.0+)
-2. Windows architecture (plugin requires 64-bit)
+2. Notepad++ architecture (x64, x86 or ARM64) matches the plugin zip you installed
 3. API key validity on OpenAI platform
 4. Available API credits/quota
 
