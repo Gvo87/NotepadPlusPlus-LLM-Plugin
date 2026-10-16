@@ -147,19 +147,18 @@ void SettingsDialog::onInitDialog()
     std::wstring currentKey = LLMService::getInstance().getApiKey();
     SetDlgItemText(hDlg, IDC_API_KEY, currentKey.c_str());
 
-    // Populate the model selector with newer OpenAI models (gpt-4o and above).
-    // The combo is editable, so a brand-new model name can also be typed in
-    // without needing a plugin rebuild.
+    // Populate the model selector with OpenAI's current (non-deprecated)
+    // models. The combo is editable, so a brand-new or older model name can
+    // also be typed in without needing a plugin rebuild.
     HWND combo = GetDlgItem(hDlg, IDC_MODEL_COMBO);
     static const wchar_t* const kModels[] = {
-        L"gpt-5",
-        L"gpt-5-mini",
-        L"gpt-5-nano",
-        L"gpt-5-chat-latest",
-        L"gpt-4.1",
-        L"gpt-4.1-mini",
-        L"gpt-4.1-nano",
-        L"gpt-4o"
+        L"gpt-6-luna",
+        L"gpt-6-astra",
+        L"gpt-6.1-sol",
+        L"gpt-6-sol",
+        L"gpt-5.6-sol",
+        L"gpt-5.6-terra",
+        L"gpt-5.6-luna"
     };
     for (const wchar_t* model : kModels) {
         SendMessage(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(model));

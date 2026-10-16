@@ -13,6 +13,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(LLMAssistantTests
+    src/ModelParams.cpp
     src/RequestTarget.cpp
     src/SimpleJson.cpp
     src/TextCodec.cpp
