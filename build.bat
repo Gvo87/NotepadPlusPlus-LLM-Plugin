@@ -1,64 +1,110 @@
 @echo off
-echo Building Notepad++ LLM Assistant Plugin with Visual Studio 2022...
+setlocal
+REM Builds x64\Release\LLMAssistant.dll with the newest Visual Studio (2022 or
+REM later, any edition or Build Tools) that has the C++ build tools.
+REM   build.bat            build, then wait for a key press
+REM   build.bat /nopause   build without waiting (used by deploy.bat)
 
-REM Set Visual Studio 2022 environment
-set VS2022_PATH="C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-set VS2022_PRO_PATH="C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"
-set VS2022_ENT_PATH="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
+set "ROOT=%~dp0"
+set "NO_PAUSE="
+if /i "%~1"=="/nopause" set "NO_PAUSE=1"
 
-REM Try to find and setup VS2022 environment
-if exist %VS2022_PATH% (
-    echo Found Visual Studio 2022 Community
-    call %VS2022_PATH%
-) else if exist %VS2022_PRO_PATH% (
-    echo Found Visual Studio 2022 Professional
-    call %VS2022_PRO_PATH%
-) else if exist %VS2022_ENT_PATH% (
-    echo Found Visual Studio 2022 Enterprise
-    call %VS2022_ENT_PATH%
-) else (
-    echo Visual Studio 2022 not found in standard locations.
-    echo Please run this from a Visual Studio 2022 Developer Command Prompt.
-    pause
-    exit /b 1
+REM Work from the repo folder, also when started elevated (cwd is System32 then)
+cd /d "%ROOT%"
+
+echo Building Notepad++ LLM Assistant Plugin...
+
+REM Find the newest Visual Studio with the x64 C++ compiler
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+    echo ERROR: Visual Studio not found: "%VSWHERE%" does not exist.
+    echo Install Visual Studio 2022 or later with the "Desktop development with C++" workload.
+    goto :fail
 )
+set "VS_PATH="
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_PATH=%%i"
+if not defined VS_PATH (
+    echo ERROR: No Visual Studio installation with the C++ build tools was found.
+    echo Add the "Desktop development with C++" workload in the Visual Studio Installer.
+    goto :fail
+)
+if not exist "%VS_PATH%\Common7\Tools\VsDevCmd.bat" (
+    echo ERROR: "%VS_PATH%\Common7\Tools\VsDevCmd.bat" not found.
+    goto :fail
+)
+
+echo Using Visual Studio at %VS_PATH%
+call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -no_logo -startdir=none
 
 REM Check if MSBuild is available after setting up environment
 where msbuild >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo MSBuild not found. Please ensure Visual Studio 2022 is properly installed.
-    pause
-    exit /b 1
+if errorlevel 1 (
+    echo ERROR: MSBuild not found after setting up "%VS_PATH%".
+    goto :fail
 )
 
-echo Using MSBuild from Visual Studio 2022...
-
-REM Build the plugin with VS2022 toolset
-msbuild LLMAssistant.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
-
-if %ERRORLEVEL% EQU 0 (
-    echo.
-    echo ========================================
-    echo BUILD SUCCESSFUL!
-    echo ========================================
-    echo The plugin DLL is located at: x64\Release\LLMAssistant.dll
-    echo.
-    echo Installation steps:
-    echo 1. Create folder: C:\Program Files\Notepad++\plugins\LLMAssistant\
-    echo 2. Copy LLMAssistant.dll to that folder
-    echo 3. Restart Notepad++
-    echo 4. Configure your OpenAI API key in Plugins ^> LLM Assistant ^> Settings
-    echo ========================================
+REM Keep the project's platform toolset when this Visual Studio has it;
+REM otherwise build with the newest toolset it does have, e.g. v143 on
+REM VS 2022 while the project asks for v145.
+set "PROJECT_TOOLSET="
+for /f "tokens=2,3 delims=<>" %%a in ('findstr /c:"<PlatformToolset>" LLMAssistant.vcxproj') do (
+    if "%%a"=="PlatformToolset" if not defined PROJECT_TOOLSET set "PROJECT_TOOLSET=%%b"
+)
+set "TOOLSET_FOUND="
+set "NEWEST_TOOLSET="
+for /d %%v in ("%VS_PATH%\MSBuild\Microsoft\VC\v*") do (
+    for /d %%t in ("%%v\Platforms\x64\PlatformToolsets\v*") do call :note_toolset %%~nxt
+)
+set "TOOLSET_ARG="
+if defined TOOLSET_FOUND (
+    echo Platform toolset: %PROJECT_TOOLSET%
+) else if defined NEWEST_TOOLSET (
+    echo Toolset "%PROJECT_TOOLSET%" from LLMAssistant.vcxproj is not installed, so %NEWEST_TOOLSET% is used instead.
+    set "TOOLSET_ARG=/p:PlatformToolset=%NEWEST_TOOLSET%"
 ) else (
-    echo.
-    echo ========================================
-    echo BUILD FAILED!
-    echo ========================================
-    echo Please check the error messages above.
-    echo Make sure you have:
-    echo - Visual Studio 2022 with C++ development tools
-    echo - Windows 10 SDK
-    echo ========================================
+    echo ERROR: No C++ platform toolset found under "%VS_PATH%\MSBuild\Microsoft\VC".
+    goto :fail
 )
 
+echo.
+msbuild LLMAssistant.vcxproj /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0 %TOOLSET_ARG%
+if errorlevel 1 goto :fail
+if not exist "x64\Release\LLMAssistant.dll" (
+    echo ERROR: MSBuild finished but x64\Release\LLMAssistant.dll was not produced.
+    goto :fail
+)
+
+echo.
+echo ========================================
+echo BUILD SUCCESSFUL!
+echo ========================================
+echo The plugin DLL is located at: x64\Release\LLMAssistant.dll
+if defined NO_PAUSE exit /b 0
+echo.
+echo Installation steps:
+echo 1. Create folder: C:\Program Files\Notepad++\plugins\LLMAssistant\
+echo 2. Copy LLMAssistant.dll to that folder
+echo 3. Restart Notepad++
+echo 4. Configure your OpenAI API key in Plugins ^> LLM Assistant ^> Settings
+echo ========================================
 pause
+exit /b 0
+
+:fail
+echo.
+echo ========================================
+echo BUILD FAILED!
+echo ========================================
+echo Please check the error messages above.
+echo Make sure you have:
+echo - Visual Studio 2022 or later with the "Desktop development with C++" workload
+echo - A Windows SDK, which that workload installs
+echo ========================================
+if not defined NO_PAUSE pause
+exit /b 1
+
+REM Records one installed toolset folder name, such as v145
+:note_toolset
+if /i "%~1"=="%PROJECT_TOOLSET%" set "TOOLSET_FOUND=1"
+if "%~1" GTR "%NEWEST_TOOLSET%" set "NEWEST_TOOLSET=%~1"
+exit /b 0
