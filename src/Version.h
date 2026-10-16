@@ -5,10 +5,10 @@
 //
 // This version is compiled into the DLL's VERSIONINFO resource. Notepad++'s
 // Plugins Admin reads that binary version and compares it against the "version"
-// field of the entry in nppPluginList (pl.x64.json) to decide whether an update
-// is available. When you cut a new release, bump the numbers here, tag the repo
-// with a matching "vMAJOR.MINOR" tag, and update the nppPluginList entry so
-// auto-update keeps working.
+// field of the entry in nppPluginList (pl.x64.json, pl.x86.json, pl.arm64.json)
+// to decide whether an update is available. When you cut a new release, bump the
+// numbers here, tag the repo with a matching "vMAJOR.MINOR" tag, and update the
+// nppPluginList entries so auto-update keeps working.
 
 #define LLM_VERSION_MAJOR 1
 #define LLM_VERSION_MINOR 1

@@ -39,8 +39,8 @@
 #define SC_MOD_DELETETEXT 0x2
 
 // Scintilla's position type is pointer-sized (ptrdiff_t), not int. Getting this
-// wrong shifts every field after it, so modificationType must be read through a
-// struct with the correct 64-bit layout.
+// wrong shifts every field after it on 64-bit builds (x64, ARM64), so
+// modificationType must be read through a struct with the real layout.
 typedef intptr_t Sci_Position;
 
 // Forward declarations
@@ -72,7 +72,7 @@ typedef struct {
 
 // SCNotification structure. Field types must match Scintilla's real layout
 // (Sci_Position is pointer-sized) so that fields such as modificationType are
-// read from the correct offsets on x64.
+// read from the correct offsets on x86, x64 and ARM64 alike.
 struct SCNotification {
     NMHDR nmhdr;
     Sci_Position position;

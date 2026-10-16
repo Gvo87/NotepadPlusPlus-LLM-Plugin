@@ -6,8 +6,11 @@ auto-updatable inside **Notepad++ → Plugins → Plugins Admin**.
 Plugins Admin is driven by the official
 [`notepad-plus-plus/nppPluginList`](https://github.com/notepad-plus-plus/nppPluginList)
 repository. A plugin appears there only after a small JSON entry (pointing at a
-downloadable release zip) is merged into `src/pl.x64.json`. This repo already
-contains everything needed to produce that entry.
+downloadable release zip) is merged into the list for that Notepad++
+architecture: `src/pl.x64.json`, `src/pl.x86.json` (32-bit) or
+`src/pl.arm64.json`. Each list needs its own zip, because Notepad++ only loads a
+DLL built for its own architecture. This repo already contains everything needed
+to produce those entries.
 
 ---
 
@@ -35,23 +38,32 @@ contains everything needed to produce that entry.
    ```
 
 3. The [`build-and-release`](../.github/workflows/build-and-release.yml) workflow
-   will build the x64 Release DLL, run the test suite, package
-   `LLMAssistant_v1.0_x64.zip` (DLL at the zip root), publish a **GitHub Release**,
-   and print the **SHA-256** in both the logs and the release notes.
+   will build the x64, Win32 (x86) and ARM64 Release DLLs, run the test suite,
+   package `LLMAssistant_v1.0_x64.zip`, `LLMAssistant_v1.0_x86.zip` and
+   `LLMAssistant_v1.0_arm64.zip` (DLL at the zip root), publish a
+   **GitHub Release** with all three, and print each zip's **SHA-256** in both
+   the logs and the release notes.
 
-> No CI? Build locally with `build.bat`, then run:
+> No CI? Build locally with `build.bat` (or `build.bat x86`, `build.bat arm64`),
+> then run:
 >
 > ```powershell
 > pwsh packaging\make-release-zip.ps1 -Version 1.0
+> pwsh packaging\make-release-zip.ps1 -Version 1.0 -Platform x86
+> pwsh packaging\make-release-zip.ps1 -Version 1.0 -Platform arm64
 > ```
 >
-> It writes `dist\LLMAssistant_v1.0_x64.zip`, prints the SHA-256, and generates the
+> Each run checks that the DLL is built for that architecture, carries version
+> 1.0 and exports the Notepad++ plugin functions, then writes
+> `dist\LLMAssistant_v1.0_<platform>.zip`, prints the SHA-256, and generates the
 > exact JSON entry to paste.
 
 ## Step 2 — Fill in the nppPluginList entry
 
 Use `packaging/nppPluginList-entry.json` as the template. Replace `id` with the
-SHA-256 from Step 1 and make sure `repository` points at the uploaded release zip:
+SHA-256 from Step 1 and make sure `repository` points at the uploaded release zip.
+The x86 and arm64 entries are the same apart from `id` and `repository`, which
+point at that architecture's zip:
 
 ```json
 {
@@ -77,11 +89,15 @@ SHA-256 from Step 1 and make sure `repository` points at the uploaded release zi
 5. Confirm the plugin shows under **Available**, installs correctly, and appears
    under **Installed**.
 
+For the x86 and arm64 entries, do the same with that architecture's debug build
+of Notepad++ and its list (`src/pl.x86.json`, `src/pl.arm64.json`).
+
 ## Step 4 — Open the PR
 
 Fork [`notepad-plus-plus/nppPluginList`](https://github.com/notepad-plus-plus/nppPluginList),
-add the entry to `src/pl.x64.json` (keep the array sorted/consistent with
-neighbors), commit, and open a PR that **only** modifies that JSON file. Once
+add the entry to `src/pl.x64.json`, `src/pl.x86.json` and `src/pl.arm64.json`
+(keep each array sorted/consistent with neighbors), commit, and open a PR that
+**only** modifies those JSON files. Once
 merged and the signed `nppPluginList.dll` ships, everyone can search and install
 LLM Assistant from Plugins Admin.
 
@@ -90,19 +106,20 @@ LLM Assistant from Plugins Admin.
 ## How auto-update works afterwards
 
 Plugins Admin compares the **installed DLL's binary version** with the `version`
-in `pl.x64.json`. To ship an update:
+in its architecture's list (`pl.x64.json`, `pl.x86.json` or `pl.arm64.json`).
+To ship an update:
 
 1. Bump `src/Version.h`.
-2. Tag `vX.Y` and push → the workflow builds and publishes a new release zip.
+2. Tag `vX.Y` and push → the workflow builds and publishes the new release zips.
 3. Open a follow-up PR to `nppPluginList` updating that plugin's `version`, `id`
-   (new SHA-256), and `repository` URL.
+   (new SHA-256), and `repository` URL in each of the three lists.
 
 Users then see the new version under the **Updates** tab.
 
 ## Notes / limits
 
-- This plugin ships **x64 only**, so it goes in `pl.x64.json`. To also list it for
-  32-bit or ARM64 Notepad++, add the corresponding build configurations to the
-  project and workflow and submit entries to `pl.x86.json` / `pl.arm64.json`.
+- Each list must point at the zip for its own architecture. The workflow and
+  `make-release-zip.ps1` refuse to package a DLL whose CPU type doesn't match
+  the zip it goes in.
 - If the plugin ever adds/removes Notepad++ API calls with version constraints,
   set `npp-compatible-versions` (and `old-versions-compatibility`) in the entry.

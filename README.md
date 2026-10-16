@@ -90,6 +90,7 @@ The **Custom Prompt** option allows maximum flexibility:
 ### Prerequisites
 - **Visual Studio 2022 or later** (any edition, or Build Tools) with the "Desktop development with C++" workload
 - **Windows SDK** (installed with that workload)
+- **For ARM64 builds only**: the "MSVC Build Tools for ARM64/ARM64EC (Latest)" component (on Visual Studio 2022: "MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools (Latest)"), added under Individual components in the Visual Studio Installer
 - **Git** (for cloning the repository)
 
 ### Build Steps
@@ -103,7 +104,13 @@ cd NotepadPlusPlus-LLM-Plugin
 
 # The compiled DLL will be in:
 # x64\Release\LLMAssistant.dll
+
+# Or build for 32-bit or ARM64 Notepad++:
+.\build.bat x86     # Win32\Release\LLMAssistant.dll
+.\build.bat arm64   # ARM64\Release\LLMAssistant.dll
 ```
+
+Notepad++ only loads a plugin built for its own architecture, so use the DLL that matches your Notepad++ (x64, x86 or ARM64).
 
 ### Development Environment
 The build script automatically:
@@ -112,7 +119,7 @@ The build script automatically:
 - Compiles with the project's platform toolset (v145), or with the newest installed toolset if v145 is missing (for example v143 on Visual Studio 2022)
 - Links required Windows libraries
 
-`deploy.bat` builds the same way, then copies the DLL into `C:\Program Files\Notepad++\plugins\LLMAssistant\`. Run it as Administrator. It closes Notepad++ the same way its close button does, so unsaved files are handled as usual: Notepad++ asks whether to save them, or, if session snapshot is on, keeps them in its backup for the next start. It won't copy anything while Notepad++ is still open.
+`deploy.bat` builds the x64 DLL the same way, then copies it into `C:\Program Files\Notepad++\plugins\LLMAssistant\`. Run it as Administrator. It closes Notepad++ the same way its close button does, so unsaved files are handled as usual: Notepad++ asks whether to save them, or, if session snapshot is on, keeps them in its backup for the next start. It won't copy anything while Notepad++ is still open.
 
 ### Automated Tests
 The portable request, JSON, and UTF-8 regression tests use Catch2. Configure them with CMake:

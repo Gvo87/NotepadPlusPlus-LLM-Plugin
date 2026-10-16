@@ -23,7 +23,7 @@ if errorlevel 1 (
 
 echo.
 echo [1/4] Building plugin...
-call "%~dp0build.bat" /nopause
+call "%~dp0build.bat" x64 /nopause
 if errorlevel 1 (
     echo ERROR: Build failed!
     pause

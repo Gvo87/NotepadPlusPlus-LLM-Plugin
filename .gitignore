@@ -1,6 +1,8 @@
-# x64 build directory
+# Build directories (one per platform)
 x64/
-CMakeBuild/
+Win32/
+ARM64/
+CMakeBuild*/
 _deps/
 
 # Release packaging output
